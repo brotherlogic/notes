@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/brotherlogic/notes/internal/storage"
@@ -11,7 +14,8 @@ import (
 )
 
 type Server struct {
-	store *storage.Storage
+	store     *storage.Storage
+	binaryDir string
 }
 
 func NewServer(store *storage.Storage) *Server {
@@ -163,4 +167,44 @@ func (s *Server) HandleConfigureFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) SetBinaryDir(dir string) {
+	s.binaryDir = dir
+}
+
+// HandleServeAsset serves raw note page binary image files from flat storage to authorized users.
+func (s *Server) HandleServeAsset(w http.ResponseWriter, r *http.Request) {
+	// Validate session cookie
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	path := r.URL.Path
+	prefix := "/api/pages/"
+	suffix := "/image"
+
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	pageID := path[len(prefix) : len(path)-len(suffix)]
+	if pageID == "" {
+		http.Error(w, "bad request: missing page ID", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve flat filesystem binary file path
+	filePath := filepath.Join(s.binaryDir, pageID+".bin")
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		http.Error(w, "page asset not found", http.StatusNotFound)
+		return
+	}
+
+	// Serve raw bytes with proper header
+	w.Header().Set("Content-Type", "image/png")
+	http.ServeFile(w, r, filePath)
 }
