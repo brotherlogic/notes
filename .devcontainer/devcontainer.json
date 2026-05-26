@@ -1,0 +1,39 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
+{
+	"name": "tasks",
+	"image": "mcr.microsoft.com/devcontainers/base:noble",
+	"features": {
+		"ghcr.io/devcontainers/features/go:1": {},
+		"ghcr.io/nils-geistmann/devcontainers-features/zsh:0": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers/features/common-utils": "2",
+		"ghcr.io/devcontainers-extra/features/protoc:1": {}
+	},
+	"postCreateCommand": "./postCreate.sh",
+	"workspaceFolder": "/workspaces/tasks",
+	"workingDir": "/workspaces/tasks",
+	"initializeCommand": "echo \"GH_TOKEN=$(gh auth token)\" > .devcontainer/.env.auth",
+	"runArgs": [
+		"--security-opt",
+	    "label=disable",
+	    		"--env-file",
+		"${localWorkspaceFolder}/.devcontainer/.env.auth"
+	],
+	"containerEnv": {
+	    		"GH_GIT_PROTOCOL": "ssh",
+		"LANG": "en_US.UTF-8",
+		"LC_ALL": "en_US.UTF-8",
+		"TZ": "America/Los_Angeles"
+	},
+	"mounts": [
+		{
+			"source": "${localEnv:HOME}/.ssh",
+			"target": "/home/vscode/.ssh", 
+			"type": "bind",
+			"options": "readonly" 
+		},
+	        		"source=/var/run/dbus,target=/var/run/dbus,type=bind",
+		"source=/run/user,target=/run/user,type=bind"
+	]
+}
