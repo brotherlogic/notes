@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package notes;
+
+option go_package = "github.com/brotherlogic/notes/proto";
+
+message UserConfig {
+  string github_username = 1;
+  string github_oauth_token = 2;
+  string gdrive_oauth_token = 3;
+  string gdrive_refresh_token = 4;
+  int64 gdrive_token_expiry = 5;
+  string gdrive_notes_folder_id = 6;
+  int64 last_sync_time = 7;
+}
+
+message Page {
+  string id = 1;
+  int32 page_number = 2;
+  string drive_file_id = 3;
+  string github_project = 4; // Format: "owner/repo"
+  bool processed = 5;
+  int64 created_time = 6;
+  int64 updated_time = 7;
+  string local_file_path = 8;
+}
+
+message Notebook {
+  string id = 1;
+  string title = 2;
+  string drive_folder_id = 3;
+  string github_project = 4; // Format: "owner/repo"
+  repeated Page pages = 5;
+  int64 last_updated = 6;
+}
