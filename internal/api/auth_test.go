@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/brotherlogic/notes/internal/api"
@@ -96,5 +97,50 @@ func TestGoogleDriveLinkCallback(t *testing.T) {
 	}
 	if config.GdriveRefreshToken == "" {
 		t.Errorf("Expected GdriveRefreshToken to be populated, got empty string")
+	}
+}
+
+func TestConfigureFolderEndpoint(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-github-user"
+
+	// Preset a user in pstore
+	err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername: username,
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	// 1. Create a request with session cookie
+	payload := `{"folder_id": "drive_folder_xyz789"}`
+	req := httptest.NewRequest("POST", "/api/config/folder", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+
+	w := httptest.NewRecorder()
+
+	// 2. Call configure handler
+	server.HandleConfigureFolder(w, req)
+
+	resp := w.Result()
+
+	// 3. Assert success status
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	// 4. Verify that UserConfig has been updated
+	config, err := store.GetUserConfig(ctx, username)
+	if err != nil {
+		t.Fatalf("Failed to retrieve user config: %v", err)
+	}
+
+	if config.GdriveNotesFolderId != "drive_folder_xyz789" {
+		t.Errorf("Expected GdriveNotesFolderId 'drive_folder_xyz789', got %q", config.GdriveNotesFolderId)
 	}
 }
