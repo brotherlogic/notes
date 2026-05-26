@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	pb "github.com/brotherlogic/notes/proto"
 	pstore_client "github.com/brotherlogic/pstore/client"
@@ -123,4 +124,25 @@ func (s *Storage) GetNotebook(ctx context.Context, id string) (*pb.Notebook, err
 	}
 
 	return notebook, nil
+}
+
+// GetUsers returns a list of all user names registered in the pstore.
+func (s *Storage) GetUsers(ctx context.Context) ([]string, error) {
+	req := &pstore_pb.GetKeysRequest{
+		Prefix: "user_config/",
+	}
+
+	resp, err := s.client.GetKeys(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user keys: %w", err)
+	}
+
+	var users []string
+	for _, key := range resp.GetKeys() {
+		parts := strings.Split(key, "/")
+		if len(parts) > 1 {
+			users = append(users, parts[1])
+		}
+	}
+	return users, nil
 }

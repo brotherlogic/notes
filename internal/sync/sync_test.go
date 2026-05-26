@@ -105,3 +105,67 @@ func TestSyncUserNotes(t *testing.T) {
 		t.Errorf("Expected file contents 'mock_png_image_bytes', got %q", string(data))
 	}
 }
+
+func TestSyncAllUsers(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_sync_all_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+
+	// Preset two users
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      "user-one",
+		GdriveNotesFolderId: "folder_one",
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user-one: %v", err)
+	}
+
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      "user-two",
+		GdriveNotesFolderId: "folder_two",
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user-two: %v", err)
+	}
+
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_abc",
+				Name:        "Notebook - Page 1.png",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_abc": []byte("image_data"),
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+
+	// 1. Run sync for all users
+	err = worker.SyncAllUsers(ctx)
+	if err != nil {
+		t.Fatalf("SyncAllUsers failed: %v", err)
+	}
+
+	// 2. Verify that both notebooks were created
+	_, err = store.GetNotebook(ctx, "folder_one")
+	if err != nil {
+		t.Errorf("Failed to retrieve notebook for user-one: %v", err)
+	}
+
+	_, err = store.GetNotebook(ctx, "folder_two")
+	if err != nil {
+		t.Errorf("Failed to retrieve notebook for user-two: %v", err)
+	}
+}
