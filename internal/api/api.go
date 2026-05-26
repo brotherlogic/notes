@@ -1,8 +1,14 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,13 +19,21 @@ import (
 	pb "github.com/brotherlogic/notes/proto"
 )
 
+type GitHubClient interface {
+	CreateIssue(ctx context.Context, token, repo, title, body string, cropData []byte) error
+}
+
 type Server struct {
 	store     *storage.Storage
 	binaryDir string
+	ghClient  GitHubClient
 }
 
 func NewServer(store *storage.Storage) *Server {
-	return &Server{store: store}
+	return &Server{
+		store:    store,
+		ghClient: &RealGitHubClient{},
+	}
 }
 
 // HandleGitHubCallback handles the GitHub OAuth authorization callback and starts user session.
@@ -207,4 +221,176 @@ func (s *Server) HandleServeAsset(w http.ResponseWriter, r *http.Request) {
 	// Serve raw bytes with proper header
 	w.Header().Set("Content-Type", "image/png")
 	http.ServeFile(w, r, filePath)
+}
+
+func (s *Server) SetGitHubClient(client GitHubClient) {
+	s.ghClient = client
+}
+
+type CreateIssueRequest struct {
+	PageID string  `json:"page_id"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	Title  string  `json:"title"`
+	Body   string  `json:"body"`
+}
+
+// HandleCreateIssue handles sub-image visual cropping and filing GitHub issues on behalf of users.
+func (s *Server) HandleCreateIssue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	username := cookie.Value
+
+	var req CreateIssueRequest
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil || req.PageID == "" || req.Title == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		http.Error(w, "user config not found", http.StatusNotFound)
+		return
+	}
+
+	if config.GithubOauthToken == "" {
+		http.Error(w, "github oauth token not configured", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Resolve notebook and page metadata
+	parts := strings.Split(req.PageID, "-page-")
+	if len(parts) == 0 {
+		http.Error(w, "invalid page ID format", http.StatusBadRequest)
+		return
+	}
+	notebookID := parts[0]
+
+	notebook, err := s.store.GetNotebook(ctx, notebookID)
+	if err != nil {
+		http.Error(w, "notebook not found", http.StatusNotFound)
+		return
+	}
+
+	if notebook.GithubProject == "" {
+		http.Error(w, "notebook not linked to a github project", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Open raw binary file from disk
+	filePath := filepath.Join(s.binaryDir, req.PageID+".bin")
+	file, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "page file not found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	// 3. Decode in-memory image
+	img, _, err := image.Decode(file)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode image: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 4. Perform in-memory sub-image crop
+	bounds := img.Bounds()
+	x := int(req.X)
+	y := int(req.Y)
+	wVal := int(req.Width)
+	hVal := int(req.Height)
+
+	// Validate bounds to prevent runtime panics
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	if x+wVal > bounds.Dx() {
+		wVal = bounds.Dx() - x
+	}
+	if y+hVal > bounds.Dy() {
+		hVal = bounds.Dy() - y
+	}
+
+	// sub-image interface check
+	subImg, ok := img.(interface {
+		SubImage(r image.Rectangle) image.Image
+	})
+	if !ok {
+		http.Error(w, "image type does not support cropping", http.StatusInternalServerError)
+		return
+	}
+
+	cropped := subImg.SubImage(image.Rect(x, y, x+wVal, y+hVal))
+
+	// Encode cropped image to PNG bytes buffer
+	var buf bytes.Buffer
+	err = png.Encode(&buf, cropped)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode cropped image: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 5. Submit issue using GitHub client
+	err = s.ghClient.CreateIssue(ctx, config.GithubOauthToken, notebook.GithubProject, req.Title, req.Body, buf.Bytes())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create github issue: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+type RealGitHubClient struct{}
+
+func (g *RealGitHubClient) CreateIssue(ctx context.Context, token, repo, title, body string, cropData []byte) error {
+	base64Data := base64.StdEncoding.EncodeToString(cropData)
+	imgTag := fmt.Sprintf("\n\n### Crop Area\n![Handwritten Note Crop](data:image/png;base64,%s)", base64Data)
+
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/issues", repo)
+
+	reqPayload := map[string]string{
+		"title": title,
+		"body":  body + imgTag,
+	}
+	jsonBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(jsonBytes))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("github api returned status %s: %s", resp.Status, string(respBytes))
+	}
+
+	return nil
 }

@@ -1,11 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 export default function PageViewer({ notebook, onClose }) {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [showProcessed, setShowProcessed] = useState(false);
   const [animate, setAnimate] = useState(false);
 
-  // Filter pages based on whether we are showing processed ones or not
+  // Crop State
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [startCoords, setStartCoords] = useState({ x: 0, y: 0 });
+  const [cropBox, setCropBox] = useState(null); // { x, y, w, h } in display pixels
+  const [showFormModal, setShowFormModal] = useState(false);
+  
+  // Issue Form State
+  const [issueTitle, setIssueTitle] = useState('');
+  const [issueBody, setIssueBody] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const imgRef = useRef(null);
+  const containerRef = useRef(null);
+
   const filteredPages = (notebook.pages || []).filter(page => {
     if (showProcessed) return true;
     return !page.processed;
@@ -13,9 +26,10 @@ export default function PageViewer({ notebook, onClose }) {
 
   const currentPage = filteredPages[currentPageIndex];
 
-  // Trigger page flip animations
+  // Trigger page flip animations and reset crop box
   useEffect(() => {
     setAnimate(true);
+    setCropBox(null);
     const timer = setTimeout(() => setAnimate(false), 300);
     return () => clearTimeout(timer);
   }, [currentPageIndex]);
@@ -42,15 +56,95 @@ export default function PageViewer({ notebook, onClose }) {
       .then(res => {
         if (res.ok) {
           currentPage.processed = !currentPage.processed;
-          // Trigger next page index bounds check
           if (currentPageIndex >= filteredPages.length - 1 && currentPageIndex > 0) {
             setCurrentPageIndex(currentPageIndex - 1);
           } else {
-            setCurrentPageIndex(currentPageIndex); // force re-render
+            setCurrentPageIndex(currentPageIndex);
           }
         }
       })
       .catch(err => console.error(err));
+  };
+
+  // Click & Drag Crop Drawing Handlers
+  const handleMouseDown = (e) => {
+    if (!containerRef.current || currentPage?.processed) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    setIsDrawing(true);
+    setStartCoords({ x, y });
+    setCropBox({ x, y, w: 0, h: 0 });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDrawing || !containerRef.current || !cropBox) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+
+    const x = Math.min(startCoords.x, currentX);
+    const y = Math.min(startCoords.y, currentY);
+    const w = Math.abs(startCoords.x - currentX);
+    const h = Math.abs(startCoords.y - currentY);
+
+    setCropBox({ x, y, w, h });
+  };
+
+  const handleMouseUp = () => {
+    if (!isDrawing) return;
+    setIsDrawing(false);
+    if (cropBox && cropBox.w > 10 && cropBox.h > 10) {
+      // Show form modal to file issue
+      setShowFormModal(true);
+    } else {
+      setCropBox(null);
+    }
+  };
+
+  const handleSubmitIssue = (e) => {
+    e.preventDefault();
+    if (!imgRef.current || !cropBox) return;
+
+    setIsSubmitting(true);
+
+    // Calculate scale factor relative to natural image dimensions
+    const img = imgRef.current;
+    const scaleX = img.naturalWidth / img.clientWidth;
+    const scaleY = img.naturalHeight / img.clientHeight;
+
+    const payload = {
+      page_id: currentPage.id,
+      x: cropBox.x * scaleX,
+      y: cropBox.y * scaleY,
+      width: cropBox.w * scaleX,
+      height: cropBox.h * scaleY,
+      title: issueTitle,
+      body: issueBody
+    };
+
+    fetch('/api/issues/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(res => {
+        if (res.ok) {
+          alert('GitHub issue created successfully!');
+          setCropBox(null);
+          setIssueTitle('');
+          setIssueBody('');
+          setShowFormModal(false);
+        } else {
+          alert('Failed to create GitHub issue.');
+        }
+        setIsSubmitting(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setIsSubmitting(false);
+      });
   };
 
   return (
@@ -63,7 +157,6 @@ export default function PageViewer({ notebook, onClose }) {
 
         <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{notebook.title}</h2>
 
-        {/* Processed Toggles */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
             <input
@@ -128,21 +221,31 @@ export default function PageViewer({ notebook, onClose }) {
               </div>
             </div>
 
-            {/* Note Page Image Sheet */}
-            <div style={{
-              position: 'relative',
-              width: '100%',
-              maxHeight: '600px',
-              overflow: 'hidden',
-              borderRadius: '12px',
-              backgroundColor: 'rgba(0, 0, 0, 0.2)',
-              display: 'flex',
-              justifyContent: 'center',
-              border: '1px solid var(--border-frosted)'
-            }}>
+            {/* Interactive Image Drawing Container */}
+            <div
+              ref={containerRef}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              style={{
+                position: 'relative',
+                width: '100%',
+                maxHeight: '600px',
+                overflow: 'hidden',
+                borderRadius: '12px',
+                backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                display: 'flex',
+                justifyContent: 'center',
+                border: '1px solid var(--border-frosted)',
+                cursor: currentPage.processed ? 'not-allowed' : 'crosshair',
+                userSelect: 'none'
+              }}
+            >
               <img
+                ref={imgRef}
                 src={`/api/pages/${currentPage.id}/image`}
                 alt={`Notebook Page ${currentPage.pageNumber}`}
+                draggable={false}
                 style={{
                   maxWidth: '100%',
                   height: 'auto',
@@ -151,20 +254,36 @@ export default function PageViewer({ notebook, onClose }) {
                   transition: 'var(--transition-smooth)'
                 }}
               />
+
+              {/* Crop Bounding Box Overlay */}
+              {cropBox && (
+                <div style={{
+                  position: 'absolute',
+                  left: `${cropBox.x}px`,
+                  top: `${cropBox.y}px`,
+                  width: `${cropBox.w}px`,
+                  height: `${cropBox.h}px`,
+                  border: '2px solid var(--accent)',
+                  backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                  boxShadow: '0 0 8px rgba(56, 189, 248, 0.4)',
+                  pointerEvents: 'none'
+                }} />
+              )}
               
-              {/* Coming Soon Crop Overlay guidance */}
-              <div style={{
-                position: 'absolute',
-                top: '12px',
-                right: '12px',
-                background: 'rgba(0,0,0,0.6)',
-                padding: '4px 8px',
-                borderRadius: '6px',
-                fontSize: '0.75rem',
-                color: 'var(--text-secondary)'
-              }}>
-                ℹ️ Drag to Crop (Coming in Issue 5)
-              </div>
+              {!currentPage.processed && (
+                <div style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  background: 'rgba(0,0,0,0.6)',
+                  padding: '4px 8px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: 'var(--text-secondary)'
+                }}>
+                  🖱️ Click & Drag to Crop
+                </div>
+              )}
             </div>
 
             {/* Pagination Controls */}
@@ -186,6 +305,97 @@ export default function PageViewer({ notebook, onClose }) {
                 Next Page ▶
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* GitHub Issue Creation Glass Modal Form */}
+      {showFormModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div
+            className="glass-container"
+            style={{
+              maxWidth: '480px',
+              width: '100%',
+              padding: '32px',
+              borderRadius: '20px',
+              margin: '20px'
+            }}
+          >
+            <h3 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '20px' }}>
+              Create GitHub Issue from Crop
+            </h3>
+            
+            <form onSubmit={handleSubmitIssue} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Issue Title</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Fix button alignment in login page"
+                  value={issueTitle}
+                  onChange={(e) => setIssueTitle(e.target.value)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-frosted)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    color: '#fff',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Description</label>
+                <textarea
+                  rows={4}
+                  placeholder="Describe the issue. The cropped screenshot will be appended automatically."
+                  value={issueBody}
+                  onChange={(e) => setIssueBody(e.target.value)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-frosted)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    color: '#fff',
+                    outline: 'none',
+                    resize: 'vertical',
+                    fontFamily: 'var(--font-body)'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFormModal(false);
+                    setCropBox(null);
+                  }}
+                  className="btn btn-secondary"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Filing Issue...' : '🐙 File Issue'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
