@@ -223,6 +223,83 @@ func (s *Server) HandleServeAsset(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
+type TogglePageProcessedRequest struct {
+	Processed bool `json:"processed"`
+}
+
+// HandleTogglePageProcessed toggles the processed state of a single note page.
+func (s *Server) HandleTogglePageProcessed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	path := r.URL.Path
+	prefix := "/api/pages/"
+	suffix := "/processed"
+
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	pageID := path[len(prefix) : len(path)-len(suffix)]
+	if pageID == "" {
+		http.Error(w, "bad request: missing page ID", http.StatusBadRequest)
+		return
+	}
+
+	var req TogglePageProcessedRequest
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	parts := strings.Split(pageID, "-page-")
+	if len(parts) < 2 {
+		http.Error(w, "invalid page ID format", http.StatusBadRequest)
+		return
+	}
+	notebookID := parts[0]
+
+	ctx := r.Context()
+	notebook, err := s.store.GetNotebook(ctx, notebookID)
+	if err != nil {
+		http.Error(w, "notebook not found", http.StatusNotFound)
+		return
+	}
+
+	found := false
+	for _, page := range notebook.Pages {
+		if page.Id == pageID {
+			page.Processed = req.Processed
+			page.UpdatedTime = time.Now().Unix()
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		http.Error(w, "page not found in notebook", http.StatusNotFound)
+		return
+	}
+
+	err = s.store.SaveNotebook(ctx, notebook)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to save notebook: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Server) SetGitHubClient(client GitHubClient) {
 	s.ghClient = client
 }

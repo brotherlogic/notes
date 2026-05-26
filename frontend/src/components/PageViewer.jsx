@@ -19,10 +19,18 @@ export default function PageViewer({ notebook, onClose }) {
   const imgRef = useRef(null);
   const containerRef = useRef(null);
 
-  const filteredPages = (notebook.pages || []).filter(page => {
-    if (showProcessed) return true;
-    return !page.processed;
-  });
+  const pagesWithIndex = (notebook.pages || []).map((page, index) => ({ page, index }));
+  const filteredPages = pagesWithIndex
+    .filter(({ page }) => {
+      if (showProcessed) return true;
+      return !page.processed;
+    })
+    .sort((a, b) => {
+      if (a.page.processed && !b.page.processed) return 1;
+      if (!a.page.processed && b.page.processed) return -1;
+      return a.index - b.index;
+    })
+    .map(({ page }) => page);
 
   const currentPage = filteredPages[currentPageIndex];
 
@@ -188,7 +196,9 @@ export default function PageViewer({ notebook, onClose }) {
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              position: 'relative'
+              position: 'relative',
+              opacity: currentPage?.processed ? 0.65 : 1,
+              transition: 'var(--transition-smooth)'
             }}
           >
             {/* Page Metadata Overlay */}
