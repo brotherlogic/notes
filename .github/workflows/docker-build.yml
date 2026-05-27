@@ -1,20 +1,31 @@
 name: Build and Push Docker Image to GHCR
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: ["Automatic SemVer Tagging"]
+    types:
+      - completed
 
 jobs:
   build:
     name: Build & Push Release
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Version Tag
+        id: version
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Resolved latest version tag: $LATEST_TAG"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -35,7 +46,7 @@ jobs:
         with:
           images: ghcr.io/brotherlogic/notes
           tags: |
-            type=semver,pattern={{version}}
+            type=raw,value=${{ steps.version.outputs.tag }}
             type=raw,value=latest
 
       - name: Build and Push Docker Image
