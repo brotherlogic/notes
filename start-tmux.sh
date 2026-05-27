@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Ensure the 'prod' session exists
-if ! tmux has-session -t tasks 2>/dev/null; then
-  # Create a new session named 'prod', detached
+# Ensure the 'notes' session exists
+if ! tmux has-session -t notes 2>/dev/null; then
+  # Create a new session named 'notes', detached
   cd /workspaces/tasks
-  tmux new-session -d -s tasks
+  tmux new-session -d -s notes
 fi
