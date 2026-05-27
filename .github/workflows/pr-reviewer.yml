@@ -1,0 +1,46 @@
+name: Automated Pull Request Reviewer Assignment
+
+on:
+  workflow_run:
+    workflows: ["Go Backend Unit & Integration Tests"]
+    types: [completed]
+
+jobs:
+  assign-reviewer:
+    name: Assign Reviewer
+    # Only run if the test run succeeded
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set brotherlogic as PR Reviewer
+        env:
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Clean and sanitize the token
+          CLEANED_TOKEN=$(echo "$PERSONAL_TOKEN" | tr -d '\r\n[:space:]')
+          if [ -z "$CLEANED_TOKEN" ]; then
+            echo "PERSONAL_TOKEN is empty. Falling back to GITHUB_TOKEN..."
+            export GH_TOKEN="$GITHUB_TOKEN"
+          else
+            export GH_TOKEN="$CLEANED_TOKEN"
+          fi
+
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          echo "Test run succeeded for SHA: $SHA. Resolving pull request..."
+
+          # Resolve PR number associated with this commit SHA
+          PR_NUMBER=$(gh pr list --state open --json number,headRefOid --jq ".[] | select(.headRefOid == \"$SHA\") | .number")
+
+          if [ -n "$PR_NUMBER" ]; then
+            echo "Found active Pull Request #$PR_NUMBER. Adding brotherlogic as reviewer..."
+            gh pr edit "$PR_NUMBER" --add-reviewer "brotherlogic" || echo "Note: Could not add brotherlogic as reviewer (likely because they are the PR author)."
+          else
+            echo "No active open Pull Request found for commit SHA: $SHA. Skipping."
+          fi
