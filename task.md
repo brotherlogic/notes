@@ -38,3 +38,4 @@
 - `[x]` Issue 35: Automated Pull Request Builder Workflow - COMPLETED
     - `[x]` Sub-Issue 35.1: Implement Automated PR Builder Workflow (.github/workflows/pr-builder.yml) - COMPLETED
     - `[x]` Sub-Issue 35.2: Implement Automated PR Merger Workflow (.github/workflows/pr-merger.yml) - COMPLETED
+    - `[x]` Sub-Issue 35.3: Implement Automated PR Reviewer Assignment Workflow (.github/workflows/pr-reviewer.yml) - COMPLETED
