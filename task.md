@@ -35,3 +35,5 @@
     - `[x]` Sub-Issue 34.2: Implement Docker Build & Push Workflow (.github/workflows/docker-build.yml) - COMPLETED
     - `[x]` Sub-Issue 34.3: Update Deployment Specs in REQUIREMENTS.md to use GHCR Registry - COMPLETED
     - `[x]` Sub-Issue 34.4: Implement Go Unit & Integration Testing Workflow (.github/workflows/tests.yml) - COMPLETED
+- `[x]` Issue 35: Automated Pull Request Builder Workflow - COMPLETED
+    - `[x]` Sub-Issue 35.1: Implement Automated PR Builder Workflow (.github/workflows/pr-builder.yml) - COMPLETED
