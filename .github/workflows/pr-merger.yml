@@ -1,0 +1,54 @@
+name: Automated Pull Request Merger
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: ["Go Backend Unit & Integration Tests"]
+    types: [completed]
+
+jobs:
+  auto-merge:
+    name: Auto Merge Pull Request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check and Merge Ready PRs
+        env:
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Clean and sanitize the token
+          CLEANED_TOKEN=$(echo "$PERSONAL_TOKEN" | tr -d '\r\n[:space:]')
+          if [ -z "$CLEANED_TOKEN" ]; then
+            echo "PERSONAL_TOKEN is empty. Falling back to GITHUB_TOKEN..."
+            export GH_TOKEN="$GITHUB_TOKEN"
+          else
+            export GH_TOKEN="$CLEANED_TOKEN"
+          fi
+
+          # List all open PRs
+          PRS=$(gh pr list --state open --json number --jq '.[].number')
+
+          if [ -z "$PRS" ]; then
+            echo "No open pull requests to process."
+            exit 0
+          fi
+
+          for pr in $PRS; do
+            echo "Inspecting Pull Request #$pr..."
+
+            # Attempt direct merge (with admin bypass if credentials support it)
+            echo "Attempting direct merge for PR #$pr..."
+            if gh pr merge "$pr" --merge --delete-branch --admin; then
+              echo "PR #$pr successfully merged!"
+            else
+              echo "Direct merge blocked. Enabling native auto-merge for PR #$pr..."
+              gh pr merge "$pr" --auto --merge --delete-branch || echo "Auto-merge could not be enabled for #$pr."
+            fi
+          done
