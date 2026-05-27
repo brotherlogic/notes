@@ -10,6 +10,9 @@ jobs:
     name: Build Auto Pull Request
     # Skip runs triggered by the automation user or github-actions bot
     if: github.actor != 'brotherlogic-automation' && github.actor != 'github-actions[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -17,10 +20,21 @@ jobs:
 
       - name: Create or Update Pull Request
         env:
-          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
           echo "Processing branch push: $BRANCH_NAME by @${{ github.actor }}"
+
+          # Clean and trim the personal token to prevent invalid header field value errors
+          CLEANED_TOKEN=$(echo "$PERSONAL_TOKEN" | tr -d '\r\n[:space:]')
+          if [ -z "$CLEANED_TOKEN" ]; then
+            echo "PERSONAL_TOKEN is empty or invalid. Falling back to GITHUB_TOKEN..."
+            export GH_TOKEN="$GITHUB_TOKEN"
+          else
+            echo "Using provided PERSONAL_TOKEN for authentication."
+            export GH_TOKEN="$CLEANED_TOKEN"
+          fi
 
           # Check if a pull request already exists for this head branch
           PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number')
