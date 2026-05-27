@@ -93,3 +93,5 @@ To run the double OAuth link layer, you must configure applications on both deve
 *   **[REQUIREMENTS.md](file:///workspaces/tasks/REQUIREMENTS.md)**: Full Kubernetes cluster parameters, `pvc.yaml` mount points, service ports, and deployment files.
 *   **[implementation_plan.md](file:///workspaces/tasks/implementation_plan.md)**: Slices design, storage mock bug workarounds, and database persistence architectures.
 *   **[walkthrough.md](file:///workspaces/tasks/walkthrough.md)**: Step-by-step developer walkthrough of soft archives, entrypoints, and CI/CD tagging.
+
+<!-- No-op commit to test automated GHA workflows -->
