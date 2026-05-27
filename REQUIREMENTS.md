@@ -116,8 +116,45 @@ spec:
 
 ## 4. Networking & Service Routing
 
-* **Service Port**: Expose TCP Port `8080` internally via a cluster IP Service.
-* **Ingress Mapping**: Route public domain requests to the `notes-server` service, ensuring `http` or `https` endpoints map clean paths for:
-  - `/login/github/callback` (GitHub OAuth return)
-  - `/link/gdrive/callback` (Google Drive OAuth link return)
-  - `/` (Frontend SPA assets dashboard root)
+To route traffic securely to the application pods, we require a Kubernetes Service and an Ingress controller mapping.
+
+### Target Service Manifest (`service.yaml`)
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: notes-server-svc
+  namespace: notes
+spec:
+  selector:
+    app: notes-server
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+```
+
+### Target Ingress Manifest (`ingress.yaml`)
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: notes-ingress
+  namespace: notes
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  rules:
+    - host: notes.brotherlogic.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: notes-server-svc
+                port:
+                  number: 8080
+```
