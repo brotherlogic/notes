@@ -17,11 +17,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Resolve Tagger Token
+        id: resolve_token
+        env:
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CLEANED_TOKEN=$(echo "$PERSONAL_TOKEN" | tr -d '\r\n[:space:]')
+          if [ -n "$CLEANED_TOKEN" ] && gh api user --json login --token "$CLEANED_TOKEN" > /dev/null 2>&1; then
+            echo "Using valid PERSONAL_TOKEN to trigger downstream docker-build workflows."
+            echo "token=$CLEANED_TOKEN" >> $GITHUB_OUTPUT
+          else
+            echo "WARNING: PERSONAL_TOKEN is empty or invalid. Falling back to GITHUB_TOKEN (Note: downstream workflows will not trigger)."
+            echo "token=$GITHUB_TOKEN" >> $GITHUB_OUTPUT
+          fi
+
       - name: Bump Version and Push Tag
         id: tag_version
         uses: anothrNick/github-tag-action@1.64.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.resolve_token.outputs.token }}
           WITH_V: true
           DEFAULT_BUMP: patch
           INITIAL_VERSION: 0.0.1
