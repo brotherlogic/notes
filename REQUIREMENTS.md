@@ -158,3 +158,18 @@ spec:
                 port:
                   number: 8080
 ```
+
+---
+
+## 5. Deployment Instructions for brotherlogic/prod
+
+To release these infrastructure templates into the production environment via your cluster repository (`brotherlogic/prod`):
+
+1. **Directories**: Copy the YAML templates (`pvc.yaml`, `deployment.yaml`, `service.yaml`, and `ingress.yaml`) defined in this specifications file into the appropriate app directory (e.g. `apps/notes-management/`) in the `brotherlogic/prod` repository.
+2. **Secrets Setup**: Ensure that the `oauth-secrets` Secret exists in the target `notes` namespace of your cluster containing base64-encoded credentials for the following keys before deploying:
+   * `github-client-id`
+   * `github-client-secret`
+   * `google-client-id`
+   * `google-client-secret`
+3. **Application**: Apply the manifest tree using your GitOps workflow or execute `kubectl apply -f .` within the directory to roll out the persistent volumes, cluster routing services, and load balanced server deployment.
+
