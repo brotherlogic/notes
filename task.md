@@ -1,0 +1,37 @@
+# Notes Management System - Task Checklist
+
+- `[x]` Issue 1: Proto Schemas & `pstore` Integration (Core Backend) - COMPLETED (GitHub #1)
+    - `[x]` Sub-Issue 1.1: Define Protobuf Schema (`proto/notes.proto`) - COMPLETED (GitHub #7)
+    - `[x]` Sub-Issue 1.2: Write Failing Storage Unit Tests (`internal/storage/storage_test.go`) - COMPLETED (GitHub #8)
+    - `[x]` Sub-Issue 1.3: Implement the `Storage` Core Struct & UserConfig Persistence (GitHub #9) - COMPLETED (GitHub #9)
+    - `[x]` Sub-Issue 1.4: Implement Notebook Persistence & Error Handling (GitHub #10) - COMPLETED (GitHub #10)
+- `[x]` Issue 2: GitHub & Google Drive OAuth Flow - COMPLETED (GitHub #2)
+    - `[x]` Sub-Issue 2.1: Write Failing Session & Auth Handler Unit Tests (`internal/api/auth_test.go`) - COMPLETED (GitHub #11)
+    - `[x]` Sub-Issue 2.2: Implement GitHub OAuth & Session Middleware (GitHub #12) - COMPLETED (GitHub #12)
+    - `[x]` Sub-Issue 2.3: Implement Google Drive OAuth & Folder Configuration Endpoint (GitHub #13) - COMPLETED (GitHub #13)
+- `[x]` Issue 3: Google Drive Scanning & Periodic Sync Loop - COMPLETED (GitHub #3)
+    - `[x]` Sub-Issue 3.1: Write Failing Google Drive Scanner Unit Tests (`internal/sync/sync_test.go`) - COMPLETED (GitHub #14)
+    - `[x]` Sub-Issue 3.2: Implement Google Drive Scanner Client & Metadata Sync (GitHub #15) - COMPLETED (GitHub #15)
+    - `[x]` Sub-Issue 3.3: Implement Binary File Downloader & Periodic Worker Loop (GitHub #16) - COMPLETED (GitHub #16)
+- `[x]` Issue 4: Page Viewer React UI & Asset API - COMPLETED (GitHub #4)
+    - `[x]` Sub-Issue 4.1: Write Failing Asset API Unit Tests (`internal/api/assets_test.go`) - COMPLETED (GitHub #17)
+    - `[x]` Sub-Issue 4.2: Implement Go Asset Endpoint Handler (GitHub #18) - COMPLETED (GitHub #18)
+    - `[x]` Sub-Issue 4.3: Bootstrap React Frontend with Premium Styling Tokens & Pages (GitHub #19) - COMPLETED (GitHub #19)
+- `[x]` Issue 5: Bounding Box Crop & GitHub Issue Creation - COMPLETED (GitHub #5)
+    - `[x]` Sub-Issue 5.1: Write Failing Bounding Box Crop & GitHub Issue API Unit Tests (`internal/api/issues_test.go`) - COMPLETED (GitHub #20)
+    - `[x]` Sub-Issue 5.2: Implement Go Image Cropping & GitHub Client Exchange (GitHub #21) - COMPLETED (GitHub #21)
+    - `[x]` Sub-Issue 5.3: Build Frontend Drag-to-Crop Bounding Box & Issue Form UI (GitHub #22) - COMPLETED (GitHub #22)
+- `[x]` Issue 6: Soft Archive Processing Workflow (End-to-End) - COMPLETED (GitHub #6)
+    - `[x]` Sub-Issue 6.1: Write Failing Processed Status Toggle API Unit Tests (`internal/api/processed_test.go`) - COMPLETED (GitHub #23)
+    - `[x]` Sub-Issue 6.2: Implement Go Processed Toggling Endpoint (GitHub #24) - COMPLETED (GitHub #24)
+    - `[x]` Sub-Issue 6.3: Implement Frontend Processed Glass Styling & Archiving Toggles (GitHub #25) - COMPLETED (GitHub #25)
+- `[x]` Issue 26: Production Hosting & Entrypoint (GitHub #26) - COMPLETED (GitHub #26)
+    - `[x]` Sub-Issue 26.1: Parse and Validate System Environment Configuration (GitHub #29) - COMPLETED (GitHub #29)
+    - `[x]` Sub-Issue 26.2: Setup Database Client and Instantiate Backend Services (GitHub #30) - COMPLETED (GitHub #30)
+    - `[x]` Sub-Issue 26.3: Wire Up HTTP Routes and Serve React Frontend Assets (GitHub #31) - COMPLETED (GitHub #31)
+    - `[x]` Sub-Issue 26.4: Orchestrate Background Sync Loop and Clean Graceful Shutdown (GitHub #32) - COMPLETED (GitHub #32)
+- `[x]` Issue 34: GitHub Actions Version Tagging and Docker Push Workflows - COMPLETED
+    - `[x]` Sub-Issue 34.1: Implement Auto-SemVer Tagging Workflow (.github/workflows/tagger.yml) - COMPLETED
+    - `[x]` Sub-Issue 34.2: Implement Docker Build & Push Workflow (.github/workflows/docker-build.yml) - COMPLETED
+    - `[x]` Sub-Issue 34.3: Update Deployment Specs in REQUIREMENTS.md to use GHCR Registry - COMPLETED
+    - `[x]` Sub-Issue 34.4: Implement Go Unit & Integration Testing Workflow (.github/workflows/tests.yml) - COMPLETED

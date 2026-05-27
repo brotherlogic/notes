@@ -71,6 +71,7 @@ All nine GitHub Issues have been successfully closed:
 
 We have established a complete continuous integration and delivery (CI/CD) system using GitHub Actions:
 
-- **Automatic SemVer Tagging Workflow (`tagger.yml`)**: Fires automatically on pushes to the `main` branch. Calculates semantic tags using `anothrNick/github-tag-action` and pushes them directly back to the repo, starting at `v1.0.0` and defaulting to patch increments.
+- **Automatic SemVer Tagging Workflow (`tagger.yml`)**: Fires automatically on pushes to the `main` branch. Calculates semantic tags using `anothrNick/github-tag-action` and pushes them directly back to the repo, starting at `v0.0.1` and defaulting to patch increments.
 - **Docker Build & Push Workflow (`docker-build.yml`)**: Fires automatically on new tag creation triggers matching `v*`. Employs standard login, metadata extraction, and multi-stage Docker build/push actions to statically build both the React frontend and Go server, and push the artifact directly to the GitHub Container Registry (`ghcr.io/brotherlogic/notes`) using both the exact release tag and the `latest` label.
+- **Automated Go Testing Workflow (`tests.yml`)**: Fires automatically on pull requests and pushes to `main`. Sets up the Go compiler environments, configures dependency module caches, and runs the entire Go unit and integration test suite (`go test -v ./...`) to ensure regression safety.
 
