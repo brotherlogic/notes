@@ -71,7 +71,7 @@ spec:
     spec:
       containers:
         - name: notes-server
-          image: brotherlogic/notes:latest
+          image: ghcr.io/brotherlogic/notes:latest
           ports:
             - containerPort: 8080
           env:
