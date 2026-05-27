@@ -28,7 +28,7 @@ git config --global user.name "Brotherlogic Automation"
 TMUX_BLOCK=$(cat << 'EOF'
 if [ -z "$TMUX" ] && [ -n "$PS1" ]; then
   cd /workspaces/tasks
-  /workspaces/tasks/start-tmux.sh && tmux attach-session -t tasks
+  /workspaces/tasks/start-tmux.sh && tmux attach-session -t notes
 fi
 EOF
 )
