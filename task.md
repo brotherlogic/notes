@@ -39,3 +39,4 @@
     - `[x]` Sub-Issue 35.1: Implement Automated PR Builder Workflow (.github/workflows/pr-builder.yml) - COMPLETED
     - `[x]` Sub-Issue 35.2: Implement Automated PR Merger Workflow (.github/workflows/pr-merger.yml) - COMPLETED
     - `[x]` Sub-Issue 35.3: Implement Automated PR Reviewer Assignment Workflow (.github/workflows/pr-reviewer.yml) - COMPLETED
+    - `[x]` Sub-Issue 35.4: Implement CodeQL Security Scan Analysis Workflow (.github/workflows/codeql.yml) - COMPLETED
