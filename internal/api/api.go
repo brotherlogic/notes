@@ -49,6 +49,18 @@ func (s *Server) SetOAuthCredentials(githubID, githubSecret, gdriveID, gdriveSec
 	s.gDriveClientSecret = gdriveSecret
 }
 
+func (s *Server) getRedirectURI(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https" {
+		scheme = "https"
+	}
+	// Force https for production custom domains to avoid Ingress/reverse-proxy SSL termination mismatch
+	if !strings.Contains(r.Host, "localhost") && !strings.Contains(r.Host, "127.0.0.1") {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, r.Host, path)
+}
+
 // HandleGitHubLogin redirects the user to the GitHub OAuth login page.
 func (s *Server) HandleGitHubLogin(w http.ResponseWriter, r *http.Request) {
 	if s.gitHubClientID == "" || r.URL.Query().Get("mock") == "true" {
@@ -56,11 +68,7 @@ func (s *Server) HandleGitHubLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	redirectURI := fmt.Sprintf("%s://%s/login/github/callback", scheme, r.Host)
+	redirectURI := s.getRedirectURI(r, "/login/github/callback")
 
 	authURL := fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=repo,user",
 		s.gitHubClientID, redirectURI)
@@ -84,11 +92,7 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		token = "gho_mock_token"
 	} else {
 		// Real GitHub OAuth code exchange path (production)
-		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		redirectURI := fmt.Sprintf("%s://%s/login/github/callback", scheme, r.Host)
+		redirectURI := s.getRedirectURI(r, "/login/github/callback")
 
 		// 1. Exchange code for access token
 		tokenReqPayload := map[string]string{
@@ -228,11 +232,7 @@ func (s *Server) HandleGDriveLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	redirectURI := fmt.Sprintf("%s://%s/link/gdrive/callback", scheme, r.Host)
+	redirectURI := s.getRedirectURI(r, "/link/gdrive/callback")
 
 	authURL := fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=https://www.googleapis.com/auth/drive.readonly&access_type=offline&prompt=consent",
 		s.gDriveClientID, redirectURI)
@@ -267,11 +267,7 @@ func (s *Server) HandleGDriveCallback(w http.ResponseWriter, r *http.Request) {
 		expiry = time.Now().Add(1 * time.Hour).Unix()
 	} else {
 		// Real Google Drive OAuth code exchange path (production)
-		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		redirectURI := fmt.Sprintf("%s://%s/link/gdrive/callback", scheme, r.Host)
+		redirectURI := s.getRedirectURI(r, "/link/gdrive/callback")
 
 		formValues := url.Values{}
 		formValues.Set("client_id", s.gDriveClientID)
