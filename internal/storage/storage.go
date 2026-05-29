@@ -126,6 +126,31 @@ func (s *Storage) GetNotebook(ctx context.Context, id string) (*pb.Notebook, err
 	return notebook, nil
 }
 
+// GetNotebooks retrieves all notebooks from pstore.
+func (s *Storage) GetNotebooks(ctx context.Context) ([]*pb.Notebook, error) {
+	req := &pstore_pb.GetKeysRequest{
+		Prefix: "notebook/",
+	}
+
+	resp, err := s.client.GetKeys(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get notebook keys: %w", err)
+	}
+
+	var notebooks []*pb.Notebook
+	for _, key := range resp.GetKeys() {
+		parts := strings.Split(key, "/")
+		if len(parts) > 1 {
+			id := parts[1]
+			nb, err := s.GetNotebook(ctx, id)
+			if err == nil {
+				notebooks = append(notebooks, nb)
+			}
+		}
+	}
+	return notebooks, nil
+}
+
 // GetUsers returns a list of all user names registered in the pstore.
 func (s *Storage) GetUsers(ctx context.Context) ([]string, error) {
 	req := &pstore_pb.GetKeysRequest{
