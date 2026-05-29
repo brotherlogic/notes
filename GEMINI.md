@@ -112,5 +112,5 @@ To maintain code quality and prevent common bugs, enforce the following guidelin
 - **Preserve Comments**: Maintain all unrelated comments and docstrings in existing code blocks when performing edits.
 - **Self-Documenting Plan**: Before executing complex architectural changes, write/update an implementation plan artifact to verify with the user.
 - **Automatic Issue Closing**: Ensure that code changes pushed to feature branches always close their referenced issue. Referencing the issue with closing keywords (e.g., `Resolves #45` or `Closes #45`) in commit messages or pull request descriptions ensures that it is automatically closed upon merge.
-- **No Manual Pull Request Creation**: Do NOT use `gh pr create` or any manual pull request creation tools. Pushing a feature branch is sufficient, as the repository CI/CD pipeline/PR builder will automatically handle PR generation.
+- **No Manual Pull Request Creation**: Do NOT use `gh pr create` or any manual pull request creation tools. Pushing a feature branch is sufficient; the repository CI/CD pipeline/PR builder will automatically handle PR generation.
 - **Living Document**: If you or the user discover a recurring codebase pattern, mistake, or standard, update `GEMINI.md` to capture the new rule.
