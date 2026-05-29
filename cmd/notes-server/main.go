@@ -155,6 +155,7 @@ func main() {
 	server := api.NewServer(store)
 	server.SetBinaryDir(cfg.DataDir)
 	server.SetOAuthCredentials(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GDriveClientID, cfg.GDriveClientSecret)
+	server.SetRedirectHost(cfg.RedirectHost)
 
 	// 3. Orchestrate Background Sync Loop
 	ctx, cancel := context.WithCancel(context.Background())

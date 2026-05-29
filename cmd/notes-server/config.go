@@ -15,6 +15,7 @@ type Config struct {
 	GDriveClientID     string
 	GDriveClientSecret string
 	PStoreAddress      string
+	RedirectHost       string
 }
 
 func LoadConfig() (*Config, error) {
@@ -59,6 +60,8 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("PSTORE_ADDRESS is required")
 	}
 
+	redirectHost := os.Getenv("REDIRECT_HOST")
+
 	return &Config{
 		Port:               port,
 		DataDir:            dataDir,
@@ -68,5 +71,6 @@ func LoadConfig() (*Config, error) {
 		GDriveClientID:     gdClientID,
 		GDriveClientSecret: gdClientSecret,
 		PStoreAddress:      pstoreAddr,
+		RedirectHost:       redirectHost,
 	}, nil
 }
