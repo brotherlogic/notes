@@ -194,3 +194,77 @@ func TestGetUserConfigAndNotebooks(t *testing.T) {
 		t.Errorf("Expected status 200 OK, got %v", w4.Result().StatusCode)
 	}
 }
+
+func TestGitHubLoginRedirect(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	// Case 1: No credentials set, should fallback to mock callback redirect
+	req := httptest.NewRequest("GET", "/login/github", nil)
+	w := httptest.NewRecorder()
+	server.HandleGitHubLogin(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("Expected status 302 Found, got %v", resp.StatusCode)
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "mock_github_code") {
+		t.Errorf("Expected fallback mock redirect, got %q", location)
+	}
+
+	// Case 2: Credentials set, should build real authorization URL
+	server.SetOAuthCredentials("my_client_id", "my_secret", "", "")
+	w2 := httptest.NewRecorder()
+	server.HandleGitHubLogin(w2, req)
+	resp2 := w2.Result()
+	if resp2.StatusCode != http.StatusFound {
+		t.Errorf("Expected status 302 Found, got %v", resp2.StatusCode)
+	}
+	location2 := resp2.Header.Get("Location")
+	if !strings.Contains(location2, "client_id=my_client_id") || !strings.Contains(location2, "github.com/login/oauth/authorize") {
+		t.Errorf("Expected real github authorize URL, got %q", location2)
+	}
+}
+
+func TestGDriveLoginRedirect(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	// Case 1: Unauthorized without session cookie
+	req := httptest.NewRequest("GET", "/link/gdrive", nil)
+	w := httptest.NewRecorder()
+	server.HandleGDriveLogin(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 Unauthorized for missing session cookie, got %v", w.Result().StatusCode)
+	}
+
+	// Add valid session cookie
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: "test-user"})
+
+	// Case 2: No credentials set, should fallback to mock callback redirect
+	w2 := httptest.NewRecorder()
+	server.HandleGDriveLogin(w2, req)
+	resp2 := w2.Result()
+	if resp2.StatusCode != http.StatusFound {
+		t.Errorf("Expected status 302 Found, got %v", resp2.StatusCode)
+	}
+	location2 := resp2.Header.Get("Location")
+	if !strings.Contains(location2, "mock_google_code") {
+		t.Errorf("Expected fallback mock redirect, got %q", location2)
+	}
+
+	// Case 3: Credentials set, should build real authorization URL
+	server.SetOAuthCredentials("", "", "my_gdrive_id", "my_gdrive_secret")
+	w3 := httptest.NewRecorder()
+	server.HandleGDriveLogin(w3, req)
+	resp3 := w3.Result()
+	if resp3.StatusCode != http.StatusFound {
+		t.Errorf("Expected status 302 Found, got %v", resp3.StatusCode)
+	}
+	location3 := resp3.Header.Get("Location")
+	if !strings.Contains(location3, "client_id=my_gdrive_id") || !strings.Contains(location3, "accounts.google.com/o/oauth2/v2/auth") {
+		t.Errorf("Expected real google authorize URL, got %q", location3)
+	}
+}

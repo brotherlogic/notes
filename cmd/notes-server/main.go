@@ -154,6 +154,7 @@ func main() {
 	// Instantiate API Server
 	server := api.NewServer(store)
 	server.SetBinaryDir(cfg.DataDir)
+	server.SetOAuthCredentials(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GDriveClientID, cfg.GDriveClientSecret)
 
 	// 3. Orchestrate Background Sync Loop
 	ctx, cancel := context.WithCancel(context.Background())
@@ -165,13 +166,9 @@ func main() {
 	// 4. Wire Up HTTP Server Routing
 	mux := http.NewServeMux()
 
-	// OAuth redirect endpoints (mocked for development/testing auth flow)
-	mux.HandleFunc("/login/github", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/login/github/callback?code=mock_github_code", http.StatusFound)
-	})
-	mux.HandleFunc("/link/gdrive", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/link/gdrive/callback?code=mock_google_code", http.StatusFound)
-	})
+	// OAuth login routes
+	mux.HandleFunc("/login/github", server.HandleGitHubLogin)
+	mux.HandleFunc("/link/gdrive", server.HandleGDriveLogin)
 
 	// OAuth callback routes
 	mux.HandleFunc("/login/github/callback", server.HandleGitHubCallback)
