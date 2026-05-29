@@ -30,6 +30,19 @@ export default function App() {
     window.location.href = '/login/github';
   };
 
+  const handleLogout = () => {
+    fetch('/api/logout', { method: 'POST' })
+      .then(res => {
+        if (res.ok) {
+          setIsAuthenticated(false);
+          setSelectedNotebook(null);
+        } else {
+          console.error("Failed to log out");
+        }
+      })
+      .catch(err => console.error("Error during logout:", err));
+  };
+
   if (isLoading) {
     return (
       <div style={{
@@ -108,6 +121,7 @@ export default function App() {
         <NotebookDashboard
           onSelectNotebook={(nb) => setSelectedNotebook(nb)}
           activeNotebookId={selectedNotebook?.id}
+          onLogout={handleLogout}
         />
       )}
     </div>

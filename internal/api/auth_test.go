@@ -268,3 +268,36 @@ func TestGDriveLoginRedirect(t *testing.T) {
 		t.Errorf("Expected real google authorize URL, got %q", location3)
 	}
 }
+
+func TestHandleLogout(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	req := httptest.NewRequest("POST", "/api/logout", nil)
+	w := httptest.NewRecorder()
+
+	server.HandleLogout(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	cookies := resp.Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "notes_session" {
+			sessionCookie = c
+			break
+		}
+	}
+
+	if sessionCookie == nil {
+		t.Fatalf("Expected notes_session cookie to be cleared, but cookie was not set in response")
+	}
+
+	if sessionCookie.MaxAge != -1 || sessionCookie.Value != "" {
+		t.Errorf("Expected session cookie MaxAge to be -1 and Value empty, got MaxAge %d and Value %q", sessionCookie.MaxAge, sessionCookie.Value)
+	}
+}

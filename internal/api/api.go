@@ -350,6 +350,27 @@ func (s *Server) HandleGDriveCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+// HandleLogout clears the user session cookie and logs the user out.
+func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Overwrite the cookie to expire it immediately
+	http.SetCookie(w, &http.Cookie{
+		Name:     "notes_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+
+	w.WriteHeader(http.StatusOK)
+}
+
 type ConfigureFolderRequest struct {
 	FolderID string `json:"folder_id"`
 }
