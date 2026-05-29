@@ -62,7 +62,6 @@ jobs:
             if gh pr merge "$pr" --merge --delete-branch --admin; then
               echo "PR #$pr successfully merged!"
             else
-              echo "Direct merge blocked. Enabling native auto-merge for PR #$pr..."
-              gh pr merge "$pr" --auto --merge --delete-branch || echo "Auto-merge could not be enabled for #$pr."
+              echo "Direct merge blocked (likely due to pending checks or lack of approval). Will retry on next event."
             fi
           done
