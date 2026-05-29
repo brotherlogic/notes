@@ -60,10 +60,6 @@ jobs:
               --head "$BRANCH_NAME" \
               --base main \
               --assignee "${{ github.actor }}"
-            
-            # Enable native auto-merge immediately on PR creation
-            echo "Enabling native auto-merge for the new PR..."
-            gh pr merge "$BRANCH_NAME" --auto --merge --delete-branch || echo "Auto-merge could not be enabled on creation."
           else
             echo "Pull Request already exists for this branch: #$PR_EXISTS. Skipping creation."
           fi
