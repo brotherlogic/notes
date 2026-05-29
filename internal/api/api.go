@@ -17,6 +17,7 @@ import (
 
 	"github.com/brotherlogic/notes/internal/storage"
 	pb "github.com/brotherlogic/notes/proto"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type GitHubClient interface {
@@ -470,4 +471,68 @@ func (g *RealGitHubClient) CreateIssue(ctx context.Context, token, repo, title, 
 	}
 
 	return nil
+}
+
+// HandleGetUserConfig retrieves the user configuration.
+func (s *Server) HandleGetUserConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := cookie.Value
+	ctx := r.Context()
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		http.Error(w, "user config not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	bytes, err := protojson.Marshal(config)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Write(bytes)
+}
+
+// HandleGetNotebooks retrieves all notebooks for the user.
+func (s *Server) HandleGetNotebooks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+	notebooks, err := s.store.GetNotebooks(ctx)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to get notebooks: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	var serialized []string
+	for _, nb := range notebooks {
+		bytes, err := protojson.Marshal(nb)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		serialized = append(serialized, string(bytes))
+	}
+
+	w.Write([]byte("[" + strings.Join(serialized, ",") + "]"))
 }

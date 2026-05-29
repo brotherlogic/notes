@@ -165,11 +165,21 @@ func main() {
 	// 4. Wire Up HTTP Server Routing
 	mux := http.NewServeMux()
 
+	// OAuth redirect endpoints (mocked for development/testing auth flow)
+	mux.HandleFunc("/login/github", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/login/github/callback?code=mock_github_code", http.StatusFound)
+	})
+	mux.HandleFunc("/link/gdrive", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/link/gdrive/callback?code=mock_google_code", http.StatusFound)
+	})
+
 	// OAuth callback routes
 	mux.HandleFunc("/login/github/callback", server.HandleGitHubCallback)
 	mux.HandleFunc("/link/gdrive/callback", server.HandleGDriveCallback)
 
 	// Config and Toggle API endpoints
+	mux.HandleFunc("/api/user/config", server.HandleGetUserConfig)
+	mux.HandleFunc("/api/notebooks", server.HandleGetNotebooks)
 	mux.HandleFunc("/api/configure-folder", server.HandleConfigureFolder)
 	mux.HandleFunc("/api/pages/", func(w http.ResponseWriter, r *http.Request) {
 		// Handle either serving raw asset image or toggling processed status

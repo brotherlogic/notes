@@ -144,3 +144,53 @@ func TestConfigureFolderEndpoint(t *testing.T) {
 		t.Errorf("Expected GdriveNotesFolderId 'drive_folder_xyz789', got %q", config.GdriveNotesFolderId)
 	}
 }
+
+func TestGetUserConfigAndNotebooks(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-github-user"
+
+	// 1. Verify unauthorized responses when notes_session cookie is missing
+	req := httptest.NewRequest("GET", "/api/user/config", nil)
+	w := httptest.NewRecorder()
+	server.HandleGetUserConfig(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 Unauthorized for missing session cookie, got %v", w.Result().StatusCode)
+	}
+
+	req2 := httptest.NewRequest("GET", "/api/notebooks", nil)
+	w2 := httptest.NewRecorder()
+	server.HandleGetNotebooks(w2, req2)
+	if w2.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 Unauthorized for missing session cookie, got %v", w2.Result().StatusCode)
+	}
+
+	// 2. Preset a user config
+	err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername: username,
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	// 3. Verify authorized response for user config
+	req3 := httptest.NewRequest("GET", "/api/user/config", nil)
+	req3.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w3 := httptest.NewRecorder()
+	server.HandleGetUserConfig(w3, req3)
+	if w3.Result().StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", w3.Result().StatusCode)
+	}
+
+	// 4. Verify authorized response for notebooks
+	req4 := httptest.NewRequest("GET", "/api/notebooks", nil)
+	req4.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w4 := httptest.NewRecorder()
+	server.HandleGetNotebooks(w4, req4)
+	if w4.Result().StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", w4.Result().StatusCode)
+	}
+}

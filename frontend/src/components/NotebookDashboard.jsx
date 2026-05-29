@@ -67,7 +67,9 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId }
         <div style={{ display: 'flex', gap: '12px' }}>
           <div className="glass-container" style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '12px' }}>
             <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)' }}></span>
-            <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>GitHub Connected</span>
+            <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
+              {userConfig?.githubUsername ? `@${userConfig.githubUsername}` : 'GitHub Connected'}
+            </span>
           </div>
 
           <button
