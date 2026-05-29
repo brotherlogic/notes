@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function NotebookDashboard({ onSelectNotebook, activeNotebookId }) {
+export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, onLogout }) {
   const [userConfig, setUserConfig] = useState(null);
   const [notebooks, setNotebooks] = useState([]);
   const [folderIdInput, setFolderIdInput] = useState('');
@@ -84,6 +84,32 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId }
             }}
           >
             {userConfig?.gdriveRefreshToken ? '✓ GDrive Connected' : '🔌 Link Google Drive'}
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="btn"
+            style={{
+              backgroundColor: 'rgba(239, 68, 68, 0.1)',
+              color: '#ef4444',
+              border: '1px solid rgba(239, 68, 68, 0.2)',
+              borderRadius: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'var(--transition-smooth)'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+              e.currentTarget.style.boxShadow = '0 0 15px rgba(239, 68, 68, 0.2)';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+          >
+            🚪 Log Out
           </button>
         </div>
       </header>
