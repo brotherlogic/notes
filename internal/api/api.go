@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,9 +26,13 @@ type GitHubClient interface {
 }
 
 type Server struct {
-	store     *storage.Storage
-	binaryDir string
-	ghClient  GitHubClient
+	store              *storage.Storage
+	binaryDir          string
+	ghClient           GitHubClient
+	gitHubClientID     string
+	gitHubClientSecret string
+	gDriveClientID     string
+	gDriveClientSecret string
 }
 
 func NewServer(store *storage.Storage) *Server {
@@ -35,6 +40,31 @@ func NewServer(store *storage.Storage) *Server {
 		store:    store,
 		ghClient: &RealGitHubClient{},
 	}
+}
+
+func (s *Server) SetOAuthCredentials(githubID, githubSecret, gdriveID, gdriveSecret string) {
+	s.gitHubClientID = githubID
+	s.gitHubClientSecret = githubSecret
+	s.gDriveClientID = gdriveID
+	s.gDriveClientSecret = gdriveSecret
+}
+
+// HandleGitHubLogin redirects the user to the GitHub OAuth login page.
+func (s *Server) HandleGitHubLogin(w http.ResponseWriter, r *http.Request) {
+	if s.gitHubClientID == "" || r.URL.Query().Get("mock") == "true" {
+		http.Redirect(w, r, "/login/github/callback?code=mock_github_code", http.StatusFound)
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	redirectURI := fmt.Sprintf("%s://%s/login/github/callback", scheme, r.Host)
+
+	authURL := fmt.Sprintf("https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=repo,user",
+		s.gitHubClientID, redirectURI)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // HandleGitHubCallback handles the GitHub OAuth authorization callback and starts user session.
@@ -49,13 +79,110 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	var token string
 
 	// Make the handler testable by checking for mock code
-	if code == "mock_github_code" {
+	if code == "mock_github_code" || s.gitHubClientID == "" {
 		username = "test-github-user"
 		token = "gho_mock_token"
 	} else {
 		// Real GitHub OAuth code exchange path (production)
-		username = "real-user"
-		token = "gho_real_token"
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		redirectURI := fmt.Sprintf("%s://%s/login/github/callback", scheme, r.Host)
+
+		// 1. Exchange code for access token
+		tokenReqPayload := map[string]string{
+			"client_id":     s.gitHubClientID,
+			"client_secret": s.gitHubClientSecret,
+			"code":          code,
+			"redirect_uri":  redirectURI,
+		}
+		jsonBytes, err := json.Marshal(tokenReqPayload)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to marshal token request payload: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		req, err := http.NewRequestWithContext(r.Context(), "POST", "https://github.com/login/oauth/access_token", bytes.NewReader(jsonBytes))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to create token request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to execute token request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			http.Error(w, fmt.Sprintf("github token exchange returned status %s: %s", resp.Status, string(body)), http.StatusBadRequest)
+			return
+		}
+
+		var tokenResp struct {
+			AccessToken string `json:"access_token"`
+			Error       string `json:"error"`
+			ErrorDesc   string `json:"error_description"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+			http.Error(w, fmt.Sprintf("failed to decode token response: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if tokenResp.Error != "" {
+			http.Error(w, fmt.Sprintf("github token exchange error: %s (%s)", tokenResp.Error, tokenResp.ErrorDesc), http.StatusBadRequest)
+			return
+		}
+
+		if tokenResp.AccessToken == "" {
+			http.Error(w, "github token exchange returned empty access token", http.StatusBadRequest)
+			return
+		}
+
+		token = tokenResp.AccessToken
+
+		// 2. Fetch user profile to get login name
+		userReq, err := http.NewRequestWithContext(r.Context(), "GET", "https://api.github.com/user", nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to create user info request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		userReq.Header.Set("Authorization", "token "+token)
+		userReq.Header.Set("Accept", "application/vnd.github.v3+json")
+		userReq.Header.Set("User-Agent", "brotherlogic-notes")
+
+		userResp, err := http.DefaultClient.Do(userReq)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to execute user info request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer userResp.Body.Close()
+
+		if userResp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(userResp.Body)
+			http.Error(w, fmt.Sprintf("github user info request returned status %s: %s", userResp.Status, string(body)), http.StatusBadRequest)
+			return
+		}
+
+		var userProfile struct {
+			Login string `json:"login"`
+		}
+		if err := json.NewDecoder(userResp.Body).Decode(&userProfile); err != nil {
+			http.Error(w, fmt.Sprintf("failed to decode user profile response: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if userProfile.Login == "" {
+			http.Error(w, "github user profile returned empty username", http.StatusBadRequest)
+			return
+		}
+
+		username = userProfile.Login
 	}
 
 	ctx := r.Context()
@@ -87,6 +214,31 @@ func (s *Server) HandleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+// HandleGDriveLogin redirects the user to the Google Drive OAuth authorization page.
+func (s *Server) HandleGDriveLogin(w http.ResponseWriter, r *http.Request) {
+	// Validate user is logged in via the session cookie
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if s.gDriveClientID == "" || r.URL.Query().Get("mock") == "true" {
+		http.Redirect(w, r, "/link/gdrive/callback?code=mock_google_code", http.StatusFound)
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	redirectURI := fmt.Sprintf("%s://%s/link/gdrive/callback", scheme, r.Host)
+
+	authURL := fmt.Sprintf("https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=https://www.googleapis.com/auth/drive.readonly&access_type=offline&prompt=consent",
+		s.gDriveClientID, redirectURI)
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
 // HandleGDriveCallback handles the Google Drive OAuth linking callback for authenticated users.
 func (s *Server) HandleGDriveCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
@@ -109,15 +261,73 @@ func (s *Server) HandleGDriveCallback(w http.ResponseWriter, r *http.Request) {
 	var expiry int64
 
 	// Make it testable by checking for mock code
-	if code == "mock_google_code" {
+	if code == "mock_google_code" || s.gDriveClientID == "" {
 		accessToken = "ya29.mock_token"
 		refreshToken = "1//mock_refresh_token"
 		expiry = time.Now().Add(1 * time.Hour).Unix()
 	} else {
 		// Real Google Drive OAuth code exchange path (production)
-		accessToken = "ya29.real_token"
-		refreshToken = "1//real_refresh_token"
-		expiry = time.Now().Add(1 * time.Hour).Unix()
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		redirectURI := fmt.Sprintf("%s://%s/link/gdrive/callback", scheme, r.Host)
+
+		formValues := url.Values{}
+		formValues.Set("client_id", s.gDriveClientID)
+		formValues.Set("client_secret", s.gDriveClientSecret)
+		formValues.Set("code", code)
+		formValues.Set("redirect_uri", redirectURI)
+		formValues.Set("grant_type", "authorization_code")
+
+		req, err := http.NewRequestWithContext(r.Context(), "POST", "https://oauth2.googleapis.com/token", strings.NewReader(formValues.Encode()))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to create token request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to execute token request: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			http.Error(w, fmt.Sprintf("google token exchange returned status %s: %s", resp.Status, string(body)), http.StatusBadRequest)
+			return
+		}
+
+		var tokenResp struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int64  `json:"expires_in"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+			http.Error(w, fmt.Sprintf("failed to decode token response: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		if tokenResp.AccessToken == "" {
+			http.Error(w, "google token exchange returned empty access token", http.StatusBadRequest)
+			return
+		}
+
+		accessToken = tokenResp.AccessToken
+		refreshToken = tokenResp.RefreshToken
+		if refreshToken == "" {
+			// Google only returns refresh_token on the first authorization (prompt=consent).
+			// If it's empty, we should keep the existing refresh token in the configuration.
+			ctx := r.Context()
+			existingConfig, err := s.store.GetUserConfig(ctx, username)
+			if err == nil {
+				refreshToken = existingConfig.GdriveRefreshToken
+			}
+		}
+		expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Unix()
 	}
 
 	ctx := r.Context()

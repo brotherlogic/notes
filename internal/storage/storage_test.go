@@ -4,15 +4,15 @@ import (
 	"context"
 	"testing"
 
-	pb "github.com/brotherlogic/notes/proto"
 	"github.com/brotherlogic/notes/internal/storage"
+	pb "github.com/brotherlogic/notes/proto"
 	pstore_client "github.com/brotherlogic/pstore/client"
 )
 
 func TestSaveAndGetUserConfig(t *testing.T) {
 	// Initialize a mocked PStore client
 	testClient := pstore_client.GetTestClient()
-	
+
 	// Initialize our storage manager with the mocked client
 	store := storage.NewStorage(testClient)
 
@@ -24,7 +24,7 @@ func TestSaveAndGetUserConfig(t *testing.T) {
 		GithubUsername:      username,
 		GithubOauthToken:    "gho_test_token",
 		GdriveOauthToken:    "ya29.test_token",
-		GdriveRefreshToken: "1//test_refresh_token",
+		GdriveRefreshToken:  "1//test_refresh_token",
 		GdriveTokenExpiry:   1700000000,
 		GdriveNotesFolderId: "gdrive_folder_abc123",
 		LastSyncTime:        1600000000,
@@ -69,21 +69,21 @@ func TestSaveAndGetNotebook(t *testing.T) {
 	notebookID := "notebook-123"
 
 	notebook := &pb.Notebook{
-		Id:             notebookID,
-		Title:          "My Handwritten Notes",
-		DriveFolderId:  "drive_notebook_xyz",
-		GithubProject:  "brotherlogic/notes",
-		LastUpdated:    1700000000,
+		Id:            notebookID,
+		Title:         "My Handwritten Notes",
+		DriveFolderId: "drive_notebook_xyz",
+		GithubProject: "brotherlogic/notes",
+		LastUpdated:   1700000000,
 		Pages: []*pb.Page{
 			{
-				Id:             "page-1",
-				PageNumber:     1,
-				DriveFileId:    "file_abc",
-				GithubProject:  "brotherlogic/notes",
-				Processed:      false,
-				CreatedTime:    1600000000,
-				UpdatedTime:    1600000000,
-				LocalFilePath:  "/data/pages/page-1.bin",
+				Id:            "page-1",
+				PageNumber:    1,
+				DriveFileId:   "file_abc",
+				GithubProject: "brotherlogic/notes",
+				Processed:     false,
+				CreatedTime:   1600000000,
+				UpdatedTime:   1600000000,
+				LocalFilePath: "/data/pages/page-1.bin",
 			},
 		},
 	}
