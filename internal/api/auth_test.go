@@ -301,3 +301,44 @@ func TestHandleLogout(t *testing.T) {
 		t.Errorf("Expected session cookie MaxAge to be -1 and Value empty, got MaxAge %d and Value %q", sessionCookie.MaxAge, sessionCookie.Value)
 	}
 }
+
+func TestGetRedirectURIVariations(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	// Case 1: Dynamic fallback (default)
+	server.SetOAuthCredentials("client_id_123", "secret_123", "", "")
+	req := httptest.NewRequest("GET", "/login/github", nil)
+	req.Host = "custom-domain.org"
+	w := httptest.NewRecorder()
+	server.HandleGitHubLogin(w, req)
+	resp := w.Result()
+	location := resp.Header.Get("Location")
+	// Since custom-domain.org doesn't contain localhost/127.0.0.1, it should force https
+	expectedPrefix := "https://custom-domain.org/login/github/callback"
+	if !strings.Contains(location, "redirect_uri="+expectedPrefix) {
+		t.Errorf("Expected redirect_uri to contain %q, got %q", expectedPrefix, location)
+	}
+
+	// Case 2: Configured REDIRECT_HOST override
+	server.SetRedirectHost("https://notes.brotherlogic.org")
+	w2 := httptest.NewRecorder()
+	server.HandleGitHubLogin(w2, req)
+	resp2 := w2.Result()
+	location2 := resp2.Header.Get("Location")
+	expectedOverride := "https://notes.brotherlogic.org/login/github/callback"
+	if !strings.Contains(location2, "redirect_uri="+expectedOverride) {
+		t.Errorf("Expected redirect_uri to contain overridden %q, got %q", expectedOverride, location2)
+	}
+
+	// Case 3: Configured REDIRECT_HOST override without protocol prefix (should default to https)
+	server.SetRedirectHost("notes.brotherlogic.org")
+	w3 := httptest.NewRecorder()
+	server.HandleGitHubLogin(w3, req)
+	resp3 := w3.Result()
+	location3 := resp3.Header.Get("Location")
+	if !strings.Contains(location3, "redirect_uri="+expectedOverride) {
+		t.Errorf("Expected redirect_uri to contain overridden %q, got %q", expectedOverride, location3)
+	}
+}

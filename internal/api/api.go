@@ -33,6 +33,7 @@ type Server struct {
 	gitHubClientSecret string
 	gDriveClientID     string
 	gDriveClientSecret string
+	redirectHost       string
 }
 
 func NewServer(store *storage.Storage) *Server {
@@ -49,7 +50,20 @@ func (s *Server) SetOAuthCredentials(githubID, githubSecret, gdriveID, gdriveSec
 	s.gDriveClientSecret = gdriveSecret
 }
 
+func (s *Server) SetRedirectHost(host string) {
+	s.redirectHost = host
+}
+
 func (s *Server) getRedirectURI(r *http.Request, path string) string {
+	// If redirectHost is configured, use it as the base URL
+	if s.redirectHost != "" {
+		host := strings.TrimSuffix(s.redirectHost, "/")
+		if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+			host = "https://" + host
+		}
+		return host + path
+	}
+
 	scheme := "http"
 	if r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https" {
 		scheme = "https"
