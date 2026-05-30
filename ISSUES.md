@@ -162,6 +162,49 @@ Once all component sub-issues are successfully filed:
 
 ---
 
+## 🛠️ The `seraphine-ready-to-implement` Label Workflow
+
+When a granular child sub-issue is labeled with `seraphine-ready-to-implement`, the AI assistant is triggered to execute a disciplined engineering process to implement the specified component slice.
+
+### 🔄 Workflow Lifecycle
+
+```mermaid
+graph TD
+    A[Sub-Issue Labeled seraphine-ready-to-implement] --> B[1. Context Resolution & Bug Tree Crawling]
+    B --> C[2. Red-Green TDD Process]
+    C --> D[3. Strict Scope Adherence]
+    D --> E[4. Branching & PR Review Loop]
+    E --> F[5. Auto-Closing & Parent Resolution]
+```
+
+---
+
+### 📋 Phase Guidelines
+
+#### 1. Context Resolution & Bug Tree Crawling
+Before writing any code, the agent must pull in all necessary context from the bug tree to understand where the task fits into the broader implementation.
+* **Action:** Programmatically query GitHub using the `gh` CLI (e.g., executing `gh issue view <parent_id>`) to traverse up the issue hierarchy, locate the parent implementation plan, and reference the original approved Product Requirements Document (PRD).
+
+#### 2. Red-Green TDD Process
+Follow a strict Test-Driven Development (TDD) cycle to ensure absolute correctness:
+1. **Write Red Tests:** Write the new unit test(s) first. Run the test command (e.g., `go test -v ./...` or `npm run test`) and output the failing ("Red") terminal logs directly in the chat to prove the test is failing.
+2. **Implement Green Code:** Write the implementation code. Run the tests again and verify that they pass cleanly ("Green").
+
+#### 3. Strict Scope Adherence
+* **Rule:** The agent must only work on the specific component described in the sub-issue. Avoid any unrelated refactoring or feature additions to prevent scope creep.
+
+#### 4. Branching & PR Review Loop
+1. Create a dedicated feature branch for the task and push changes.
+2. The repository CI/CD pipeline/PR builder will automatically handle PR generation.
+3. Review status in a loop to address any reviews, comments, or build failures on the PR until all comments are resolved.
+
+#### 5. Auto-Closing & Parent Resolution
+* **Auto-Close:** Do NOT close the sub-issue manually. Pushing code and submitting the PR will trigger the automatic closure of the issue upon merge.
+* **Parent Issue Checking:** Once the child issue is closed, programmatically inspect the parent issue(s) using the `gh` CLI (e.g., `gh issue list --state open` filtered by parent keywords) to check if any other sibling sub-issues remain open.
+* **Closing Parent Issues:** If and only if all sibling sub-issues are closed, proceed to close the parent issue. **Never close any issue that has open sub-issues.**
+
+---
+
 ## 🛠️ Summary of Expected Label State Transitions
 
 | Phase | Parent Issue Label(s) | Sub-Issue Title & Label(s) |
@@ -171,5 +214,6 @@ Once all component sub-issues are successfully filed:
 | **Implementation Plan Drafting** | *None* | `[Implementation Plan] <Title>` labeled with `seraphine-needs-implementation-plan` |
 | **Implementation Plan Approved** | *None* | `[Implementation Plan] <Title>` labeled with `seraphine-break-down-issue` |
 | **Issue Breakdown** | *None* | **Plan Issue:** `seraphine-break-down-issue` removed (remains Open).<br>**Child Sub-Issues:** `[Sub-Issue] <Action>` labeled with `seraphine-ready-to-implement` |
+| **Implementation** | *None* | **Plan Issue:** Remains open until all sub-issues close.<br>**Child Sub-Issues:** Labeled with `seraphine-ready-to-implement`. Closed programmatically via PR submission. |
 
 
