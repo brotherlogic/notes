@@ -30,7 +30,7 @@ jobs:
           TOKEN_VALID=false
           if [ -n "$CLEANED_TOKEN" ]; then
             echo "Validating PERSONAL_TOKEN credentials..."
-            if GH_TOKEN="$CLEANED_TOKEN" gh api user > /dev/null 2>&1; then
+            if GH_TOKEN="$CLEANED_TOKEN" gh api "repos/${{ github.repository }}" --json name > /dev/null 2>&1; then
               echo "PERSONAL_TOKEN credentials are valid!"
               TOKEN_VALID=true
             else
