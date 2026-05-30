@@ -195,12 +195,12 @@ Follow a strict Test-Driven Development (TDD) cycle to ensure absolute correctne
 * **Rule:** The agent must only work on the specific component described in the sub-issue. Avoid any unrelated refactoring or feature additions to prevent scope creep.
 
 #### 4. Branching & PR Review Loop
-1. Create a dedicated feature branch for the task and push changes.
-2. The repository CI/CD pipeline/PR builder will automatically handle PR generation.
+1. Create a dedicated feature branch for the task. Ensure that at least one of your pushed commits includes the `Closes #<ISSUE_NUMBER>` (or `Resolves #<ISSUE_NUMBER>`) stanza in the commit message.
+2. The repository CI/CD pipeline/PR builder will automatically extract this closing stanza and include it in the generated Pull Request description.
 3. Review status in a loop to address any reviews, comments, or build failures on the PR until all comments are resolved.
 
 #### 5. Auto-Closing & Parent Resolution
-* **Auto-Close:** Do NOT close the sub-issue manually. The CI/CD pipeline will automatically close the issue once the PR is merged.
+* **Auto-Close:** Do NOT close the sub-issue manually. The CI/CD pipeline will automatically close the issue once the PR is merged, relying on the `Closes #<ISSUE_NUMBER>` stanza embedded in the Pull Request.
 * **Parent Issue Checking:** Once the child issue is closed, programmatically inspect the parent issue(s) using the `gh` CLI (e.g., `gh issue list --state open` filtered by parent keywords) to check if any other sibling sub-issues remain open.
 * **Closing Parent Issues:** If and only if all sibling sub-issues are closed, proceed to close the parent issue. **Never close any issue that has open sub-issues.**
 
