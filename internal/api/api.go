@@ -360,6 +360,135 @@ func (s *Server) HandleGDriveCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+func (s *Server) refreshGDriveTokenIfNeeded(ctx context.Context, username string, config *pb.UserConfig) (string, error) {
+	if config.GdriveRefreshToken == "" {
+		return config.GdriveOauthToken, nil
+	}
+
+	// Buffer of 5 minutes before actual expiry to prevent race conditions
+	if time.Now().Unix() < config.GdriveTokenExpiry-300 {
+		return config.GdriveOauthToken, nil
+	}
+
+	// Token has expired or is about to expire, perform OAuth 2.0 refresh
+	formValues := url.Values{}
+	formValues.Set("client_id", s.gDriveClientID)
+	formValues.Set("client_secret", s.gDriveClientSecret)
+	formValues.Set("refresh_token", config.GdriveRefreshToken)
+	formValues.Set("grant_type", "refresh_token")
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://oauth2.googleapis.com/token", strings.NewReader(formValues.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("google token refresh returned status %s: %s", resp.Status, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", err
+	}
+
+	if tokenResp.AccessToken == "" {
+		return "", fmt.Errorf("google token refresh returned empty access token")
+	}
+
+	config.GdriveOauthToken = tokenResp.AccessToken
+	config.GdriveTokenExpiry = time.Now().Unix() + tokenResp.ExpiresIn
+
+	err = s.store.SaveUserConfig(ctx, config)
+	if err != nil {
+		return "", fmt.Errorf("failed to save refreshed user config: %w", err)
+	}
+
+	return config.GdriveOauthToken, nil
+}
+
+// HandleListGDriveFolders queries the Google Drive API for all folders in the user's GDrive.
+func (s *Server) HandleListGDriveFolders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := cookie.Value
+	ctx := r.Context()
+
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		http.Error(w, "user config not found", http.StatusNotFound)
+		return
+	}
+
+	if config.GdriveOauthToken == "" {
+		http.Error(w, "gdrive oauth token not configured", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Automatically refresh the access token if expired
+	token, err := s.refreshGDriveTokenIfNeeded(ctx, username, config)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to validate google tokens: %v", err), http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Query Google Drive API for folders
+	url := "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder'+and+trashed=false&fields=files(id,name)&pageSize=100"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create folders request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to execute folders request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		http.Error(w, fmt.Sprintf("google drive API returned status %s: %s", resp.Status, string(body)), http.StatusBadRequest)
+		return
+	}
+
+	var data struct {
+		Files []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data.Files)
+}
+
 // HandleLogout clears the user session cookie and logs the user out.
 func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
