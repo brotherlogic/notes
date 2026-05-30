@@ -184,6 +184,7 @@ func main() {
 	mux.HandleFunc("/api/sync/status", server.HandleGetSyncStatus)
 	mux.HandleFunc("/api/logout", server.HandleLogout)
 	mux.HandleFunc("/api/gdrive/folders", server.HandleListGDriveFolders)
+	mux.HandleFunc("/api/gdrive/folder-details", server.HandleGetFolderDetails)
 	mux.HandleFunc("/api/pages/", func(w http.ResponseWriter, r *http.Request) {
 		// Handle either serving raw asset image or toggling processed status
 		if filepath.Base(r.URL.Path) == "processed" {
