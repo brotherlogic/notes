@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,11 +109,17 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 		return fmt.Errorf("failed to list drive files: %w", err)
 	}
 
-	s.progressMu.Lock()
-	s.progress[username].Total = int32(len(files))
-	s.progressMu.Unlock()
+	// Filter for .note files
+	var noteFiles []*GDriveFile
+	for _, file := range files {
+		if strings.HasSuffix(strings.ToLower(file.Name), ".note") {
+			noteFiles = append(noteFiles, file)
+		}
+	}
 
-	var pages []*pb.Page
+	s.progressMu.Lock()
+	s.progress[username].Total = int32(len(noteFiles))
+	s.progressMu.Unlock()
 
 	// Ensure binary storage directory exists
 	err = os.MkdirAll(s.binaryDir, 0755)
@@ -120,46 +127,71 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 		return fmt.Errorf("failed to create binary storage directory: %w", err)
 	}
 
-	// 3. Process each file
-	for i, file := range files {
-		pageID := fmt.Sprintf("%s-page-%s", folderID, file.ID)
-		localPath := filepath.Join(s.binaryDir, pageID+".bin")
+	// 3. Process each .note file as a multi-page Notebook
+	for i, file := range noteFiles {
+		notebookTitle := strings.TrimSuffix(file.Name, ".note")
+		notebookID := file.ID
 
-		// Download binary file
+		// Download binary .note file bytes
 		data, err := s.gdrive.DownloadFile(ctx, file.ID)
 		if err != nil {
 			return fmt.Errorf("failed to download file %s: %w", file.ID, err)
 		}
 
-		// Write to flat filesystem path
-		err = os.WriteFile(localPath, data, 0644)
+		// Convert .note bytes to PNG pages
+		pngPages, err := ConvertNoteToPNGs(ctx, notebookTitle, data)
 		if err != nil {
-			return fmt.Errorf("failed to write local file: %w", err)
+			return fmt.Errorf("failed to convert .note file %s: %w", file.Name, err)
 		}
 
-		// Construct Page metadata
-		page := &pb.Page{
-			Id:            pageID,
-			PageNumber:    parsePageNumber(file.Name),
-			DriveFileId:   file.ID,
-			Processed:     false,
-			CreatedTime:   time.Now().Unix(),
-			UpdatedTime:   file.UpdatedTime,
-			LocalFilePath: localPath,
+		// Retrieve existing notebook to preserve metadata (processed states, linked github projects)
+		existingNotebook, err := s.store.GetNotebook(ctx, notebookID)
+		processedMap := make(map[int32]bool)
+		githubProjectMap := make(map[int32]string)
+		if err == nil && existingNotebook != nil {
+			for _, p := range existingNotebook.Pages {
+				processedMap[p.PageNumber] = p.Processed
+				githubProjectMap[p.PageNumber] = p.GithubProject
+			}
 		}
 
-		pages = append(pages, page)
+		var pages []*pb.Page
+		for pageIdx, pngBytes := range pngPages {
+			pageNum := int32(pageIdx + 1)
+			pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
+			localPath := filepath.Join(s.binaryDir, pageID+".bin")
 
-		s.progressMu.Lock()
-		s.progress[username].Current = int32(i + 1)
-		s.progressMu.Unlock()
-	}
+			// Write PNG page bytes to flat filesystem path
+			err = os.WriteFile(localPath, pngBytes, 0644)
+			if err != nil {
+				return fmt.Errorf("failed to write local page file: %w", err)
+			}
 
-	// 4. Save Notebook metadata to pstore
-	if len(pages) > 0 {
+			page := &pb.Page{
+				Id:            pageID,
+				PageNumber:    pageNum,
+				DriveFileId:   file.ID,
+				Processed:     false,
+				CreatedTime:   time.Now().Unix(),
+				UpdatedTime:   file.UpdatedTime,
+				LocalFilePath: localPath,
+			}
+
+			// Preserve existing metadata if available
+			if proc, exists := processedMap[pageNum]; exists {
+				page.Processed = proc
+			}
+			if ghProj, exists := githubProjectMap[pageNum]; exists {
+				page.GithubProject = ghProj
+			}
+
+			pages = append(pages, page)
+		}
+
+		// 4. Save distinct Notebook metadata to pstore
 		notebook := &pb.Notebook{
-			Id:            folderID,
-			Title:         folderID,
+			Id:            notebookID,
+			Title:         notebookTitle,
 			DriveFolderId: folderID,
 			Pages:         pages,
 			LastUpdated:   time.Now().Unix(),
@@ -167,8 +199,12 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 
 		err = s.store.SaveNotebook(ctx, notebook)
 		if err != nil {
-			return fmt.Errorf("failed to save synced notebook: %w", err)
+			return fmt.Errorf("failed to save synced notebook %s: %w", notebookID, err)
 		}
+
+		s.progressMu.Lock()
+		s.progress[username].Current = int32(i + 1)
+		s.progressMu.Unlock()
 	}
 
 	return nil

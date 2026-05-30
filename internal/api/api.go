@@ -563,7 +563,7 @@ func (s *Server) fetchFolderDetails(ctx context.Context, username string, config
 	}
 
 	// 2. Query folder for count of files inside it
-	filesURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files?q='%s'+in+parents+and+trashed=false&fields=files(id)&pageSize=1000", folderID)
+	filesURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files?q='%s'+in+parents+and+trashed=false&fields=files(id,name)&pageSize=1000", folderID)
 	filesReq, err := http.NewRequestWithContext(ctx, "GET", filesURL, nil)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to create files request: %w", err)
@@ -582,13 +582,23 @@ func (s *Server) fetchFolderDetails(ctx context.Context, username string, config
 	}
 
 	var filesData struct {
-		Files []interface{} `json:"files"`
+		Files []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"files"`
 	}
 	if err := json.NewDecoder(filesResp.Body).Decode(&filesData); err != nil {
 		return "", 0, fmt.Errorf("failed to decode files count: %w", err)
 	}
 
-	return folderData.Name, len(filesData.Files), nil
+	noteCount := 0
+	for _, f := range filesData.Files {
+		if strings.HasSuffix(strings.ToLower(f.Name), ".note") {
+			noteCount++
+		}
+	}
+
+	return folderData.Name, noteCount, nil
 }
 
 // HandleConfigureFolder handles setting the Google Drive Notes folder ID.

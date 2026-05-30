@@ -326,7 +326,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                 <div style={{ display: 'flex', gap: '12px', maxWidth: '800px', flexWrap: 'wrap' }}>
                   <input
                     type="text"
-                    placeholder="Enter Google Drive Folder ID containing your notebook PDFs"
+                    placeholder="Enter Google Drive Folder ID containing your Supernote .note files"
                     value={folderIdInput}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -593,7 +593,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
             </div>
 
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: 0 }}>
-              Select a Google Drive folder containing your notebook PDF files.
+              Select a Google Drive folder containing your Supernote .note files.
             </p>
 
             {/* Search Input */}
