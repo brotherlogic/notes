@@ -148,11 +148,12 @@ Seraphine analyzes the technical implementation plan proposed in the current iss
   - Just the Go gRPC service handler or sync loop logic.
   - Just a specific frontend React component, route, or styling layout.
 * **Self-Contained Verification:** Each component must be capable of being coded and tested in isolation (e.g., has its own unit tests, mock data, or visual validation).
+* **Dependency Identification:** Explicitly identify dependencies between component tasks. If task X is dependent on task Y being completed first, this sequence must be highlighted.
 
 #### 3. Programmatic Sub-Issue Creation
 For each identified component, Seraphine programmatically files a new GitHub sub-issue under the current issue.
 * **Sub-Issue Title:** Must use the format `[Sub-Issue] <Action>` (e.g., `[Sub-Issue] Implement pstore serialization for note status`).
-* **Sub-Issue Body:** Sub-issues should stand alone and do not need to include the parent implementation plan. Context can be picked up from the bug tree when needed.
+* **Sub-Issue Body:** Sub-issues should stand alone and do not need to include the parent implementation plan. Context can be picked up from the bug tree when needed. **Explicitly state issue dependencies in the description: if sub-issue X is dependent on sub-issue Y, this relationship must be clearly documented.**
 * **Sub-Issue Label:** Must be marked with the `seraphine-ready-to-implement` label.
 
 #### 4. Transition & Label Cleanup
