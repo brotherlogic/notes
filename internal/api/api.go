@@ -17,12 +17,18 @@ import (
 	"time"
 
 	"github.com/brotherlogic/notes/internal/storage"
+	"github.com/brotherlogic/notes/internal/sync"
 	pb "github.com/brotherlogic/notes/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type GitHubClient interface {
 	CreateIssue(ctx context.Context, token, repo, title, body string, cropData []byte) error
+}
+
+type SyncProgressProvider interface {
+	GetSyncProgress(username string) *sync.SyncProgress
+	SyncUserNotes(ctx context.Context, username string) error
 }
 
 type Server struct {
@@ -34,6 +40,11 @@ type Server struct {
 	gDriveClientID     string
 	gDriveClientSecret string
 	redirectHost       string
+	syncProvider       SyncProgressProvider
+}
+
+func (s *Server) SetSyncProvider(provider SyncProgressProvider) {
+	s.syncProvider = provider
 }
 
 func NewServer(store *storage.Storage) *Server {
@@ -551,7 +562,39 @@ func (s *Server) HandleConfigureFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.syncProvider != nil {
+		go func() {
+			_ = s.syncProvider.SyncUserNotes(context.Background(), username)
+		}()
+	}
+
 	w.WriteHeader(http.StatusOK)
+}
+
+// HandleGetSyncStatus handles checking the real-time sync progress.
+func (s *Server) HandleGetSyncStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := cookie.Value
+
+	if s.syncProvider == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"active": false})
+		return
+	}
+
+	progress := s.syncProvider.GetSyncProgress(username)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(progress)
 }
 
 func (s *Server) SetBinaryDir(dir string) {

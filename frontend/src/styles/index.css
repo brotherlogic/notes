@@ -125,3 +125,28 @@ h1, h2, h3, h4, h5, h6 {
 .page-flip-effect {
   animation: pageFlip 0.3s ease-out forwards;
 }
+
+@keyframes pulseGlow {
+  0% {
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), 0 0 0 0 rgba(56, 189, 248, 0.1);
+  }
+  50% {
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), 0 0 20px 4px rgba(56, 189, 248, 0.35);
+  }
+  100% {
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), 0 0 0 0 rgba(56, 189, 248, 0.1);
+  }
+}
+
+.sync-pulse {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin-slow {
+  animation: spin 3s linear infinite;
+}

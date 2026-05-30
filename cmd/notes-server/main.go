@@ -156,6 +156,7 @@ func main() {
 	server.SetBinaryDir(cfg.DataDir)
 	server.SetOAuthCredentials(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.GDriveClientID, cfg.GDriveClientSecret)
 	server.SetRedirectHost(cfg.RedirectHost)
+	server.SetSyncProvider(worker)
 
 	// 3. Orchestrate Background Sync Loop
 	ctx, cancel := context.WithCancel(context.Background())
@@ -179,6 +180,8 @@ func main() {
 	mux.HandleFunc("/api/user/config", server.HandleGetUserConfig)
 	mux.HandleFunc("/api/notebooks", server.HandleGetNotebooks)
 	mux.HandleFunc("/api/configure-folder", server.HandleConfigureFolder)
+	mux.HandleFunc("/api/config/folder", server.HandleConfigureFolder)
+	mux.HandleFunc("/api/sync/status", server.HandleGetSyncStatus)
 	mux.HandleFunc("/api/logout", server.HandleLogout)
 	mux.HandleFunc("/api/gdrive/folders", server.HandleListGDriveFolders)
 	mux.HandleFunc("/api/pages/", func(w http.ResponseWriter, r *http.Request) {
