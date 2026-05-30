@@ -119,6 +119,49 @@ Seraphine posts the finalized implementation plan to the sub-issue using premium
 
 ---
 
+## 🛠️ The `seraphine-break-down-issue` Label Workflow
+
+When an issue (typically the `[Implementation Plan]` sub-issue) is labeled with `seraphine-break-down-issue`, the AI assistant (**Seraphine**) is triggered to break the technical implementation plan down into highly granular, junior-engineer-friendly component issues.
+
+### 🔄 Workflow Lifecycle
+
+```mermaid
+graph TD
+    A[Issue Labeled seraphine-break-down-issue] --> B[1. Read Context & Parent Issues]
+    B --> C[2. Technical Breakdown Analysis]
+    C --> D[3. Programmatic Sub-Issue Creation]
+    D --> E[4. Transition & Label Cleanup]
+```
+
+---
+
+### 📋 Phase Guidelines
+
+#### 1. Read Context & Parent Issues
+The agent must read the description/body of the current issue and extract any referenced parent issue numbers (e.g., `#123` or direct links) to fetch all comments, the approved Product Requirements Document (PRD), and preceding technical discussions. This ensures the full historical context is captured before breaking down tasks.
+
+#### 2. Technical Breakdown Analysis
+Seraphine analyzes the technical implementation plan proposed in the current issue to isolate discrete work items.
+* **Granularity Goal:** Design tasks that are easily reviewable and can be completed in a single code change.
+* **Component Boundaries:** Each sub-issue must target a single, isolated slice of the technology stack. For example:
+  - Just the backend Protocol Buffer definition and `pstore` serialization layer.
+  - Just the Go gRPC service handler or sync loop logic.
+  - Just a specific frontend React component, route, or styling layout.
+* **Self-Contained Verification:** Each component must be capable of being coded and tested in isolation (e.g., has its own unit tests, mock data, or visual validation).
+
+#### 3. Programmatic Sub-Issue Creation
+For each identified component, Seraphine programmatically files a new GitHub sub-issue under the current issue.
+* **Sub-Issue Title:** Must use the format `[Sub-Issue] <Action>` (e.g., `[Sub-Issue] Implement pstore serialization for note status`).
+* **Sub-Issue Body:** Must include a copy of the parent implementation plan to provide the full technical context for the junior engineer working on the task.
+* **Sub-Issue Label:** Must be marked with the `seraphine-ready-to-implement` label.
+
+#### 4. Transition & Label Cleanup
+Once all component sub-issues are successfully filed:
+* **Remove the Label:** Remove the `seraphine-break-down-issue` label from the current issue.
+* **Keep Issue Open:** Do **not** close the current issue. Keep it open to serve as the overarching coordination point for the child tasks.
+
+---
+
 ## 🛠️ Summary of Expected Label State Transitions
 
 | Phase | Parent Issue Label(s) | Sub-Issue Title & Label(s) |
@@ -127,4 +170,6 @@ Seraphine posts the finalized implementation plan to the sub-issue using premium
 | **Requirements Approved** | *(Label Removed)* | `[Implementation Plan] <Title>` labeled with `seraphine-needs-implementation-plan` |
 | **Implementation Plan Drafting** | *None* | `[Implementation Plan] <Title>` labeled with `seraphine-needs-implementation-plan` |
 | **Implementation Plan Approved** | *None* | `[Implementation Plan] <Title>` labeled with `seraphine-break-down-issue` |
+| **Issue Breakdown** | *None* | **Plan Issue:** `seraphine-break-down-issue` removed (remains Open).<br>**Child Sub-Issues:** `[Sub-Issue] <Action>` labeled with `seraphine-ready-to-implement` |
+
 
