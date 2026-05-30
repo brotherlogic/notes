@@ -200,7 +200,7 @@ Follow a strict Test-Driven Development (TDD) cycle to ensure absolute correctne
 3. Review status in a loop to address any reviews, comments, or build failures on the PR until all comments are resolved.
 
 #### 5. Auto-Closing & Parent Resolution
-* **Auto-Close:** Do NOT close the sub-issue manually. Pushing code and submitting the PR will trigger the automatic closure of the issue upon merge.
+* **Auto-Close:** Do NOT close the sub-issue manually. The CI/CD pipeline will automatically close the issue once the PR is merged.
 * **Parent Issue Checking:** Once the child issue is closed, programmatically inspect the parent issue(s) using the `gh` CLI (e.g., `gh issue list --state open` filtered by parent keywords) to check if any other sibling sub-issues remain open.
 * **Closing Parent Issues:** If and only if all sibling sub-issues are closed, proceed to close the parent issue. **Never close any issue that has open sub-issues.**
 
