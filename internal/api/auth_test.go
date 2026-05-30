@@ -139,6 +139,19 @@ func TestConfigureFolderEndpoint(t *testing.T) {
 		t.Errorf("Expected status 200 OK, got %v", resp.StatusCode)
 	}
 
+	var details struct {
+		FolderID   string `json:"folder_id"`
+		FolderName string `json:"folder_name"`
+		FileCount  int    `json:"file_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	if details.FolderID != "drive_folder_xyz789" || details.FolderName != "drive_folder_xyz789" || details.FileCount != 0 {
+		t.Errorf("Unexpected folder details in configure response: %+v", details)
+	}
+
 	// 4. Verify that UserConfig has been updated
 	config, err := store.GetUserConfig(ctx, username)
 	if err != nil {
@@ -512,5 +525,75 @@ func TestConfigureFolderTriggersSync(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Errorf("Timed out waiting for SyncUserNotes to be triggered in background")
+	}
+}
+
+func TestHandleGetFolderDetails(t *testing.T) {
+	// Backup original transport and restore it after test
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-user"
+
+	// 1. Preset config with active token (non-expired)
+	err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:     username,
+		GdriveOauthToken:   "ya29.active_token",
+		GdriveTokenExpiry:  time.Now().Add(1 * time.Hour).Unix(),
+		GdriveRefreshToken: "1//refresh",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user config: %v", err)
+	}
+
+	// Mock Google Drive API response
+	http.DefaultClient.Transport = &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "/files/folder_123") {
+				mockMetaJSON := `{"name": "Awesome Notes Folder"}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(mockMetaJSON)),
+				}, nil
+			} else if strings.Contains(req.URL.Path, "/files") && strings.Contains(req.URL.RawQuery, "in+parents") {
+				mockFilesJSON := `{"files": [{"id": "file_1"}, {"id": "file_2"}, {"id": "file_3"}]}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(mockFilesJSON)),
+				}, nil
+			}
+			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/gdrive/folder-details?folder_id=folder_123", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	server.HandleGetFolderDetails(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	var details struct {
+		FolderID   string `json:"folder_id"`
+		FolderName string `json:"folder_name"`
+		FileCount  int    `json:"file_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	if details.FolderID != "folder_123" || details.FolderName != "Awesome Notes Folder" || details.FileCount != 3 {
+		t.Errorf("Unexpected folder details returned: %+v", details)
 	}
 }

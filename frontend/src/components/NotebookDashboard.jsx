@@ -11,6 +11,11 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
   const [isModalLoading, setIsModalLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ active: false, current: 0, total: 0, error: '' });
 
+  const [folderDetails, setFolderDetails] = useState(null);
+  const [selectedFolderPreview, setSelectedFolderPreview] = useState(null);
+  const [isEditingFolder, setIsEditingFolder] = useState(false);
+  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
+
   // Fetch initial configs, notebooks, and active sync status
   useEffect(() => {
     fetch('/api/user/config')
@@ -18,6 +23,34 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
       .then(data => {
         setUserConfig(data);
         setFolderIdInput(data.gdriveNotesFolderId || '');
+        if (data.gdriveNotesFolderId) {
+          setIsDetailsLoading(true);
+          fetch(`/api/gdrive/folder-details?folder_id=${data.gdriveNotesFolderId}`)
+            .then(res => {
+              if (res.ok) return res.json();
+              throw new Error("Failed to fetch folder details");
+            })
+            .then(details => {
+              setFolderDetails({
+                id: details.folder_id,
+                name: details.folder_name,
+                file_count: details.file_count
+              });
+              setIsDetailsLoading(false);
+            })
+            .catch(err => {
+              console.error(err);
+              // Fallback to basic details
+              setFolderDetails({
+                id: data.gdriveNotesFolderId,
+                name: "Configured Folder",
+                file_count: 0
+              });
+              setIsDetailsLoading(false);
+            });
+        } else {
+          setIsEditingFolder(true);
+        }
       })
       .catch(err => console.error("Error fetching user config:", err));
 
@@ -57,6 +90,22 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
               .then(res => res.json())
               .then(nbs => {
                 setNotebooks(nbs || []);
+                // Refresh active folder details after sync finishes to update the file count
+                if (userConfig?.gdriveNotesFolderId) {
+                  fetch(`/api/gdrive/folder-details?folder_id=${userConfig.gdriveNotesFolderId}`)
+                    .then(res => {
+                      if (res.ok) return res.json();
+                      throw new Error("Failed to fetch folder details after sync");
+                    })
+                    .then(details => {
+                      setFolderDetails({
+                        id: details.folder_id,
+                        name: details.folder_name,
+                        file_count: details.file_count
+                      });
+                    })
+                    .catch(err => console.error(err));
+                }
               })
               .catch(err => console.error("Error refreshing notebooks:", err));
           }
@@ -67,7 +116,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [syncStatus.active]);
+  }, [syncStatus.active, userConfig?.gdriveNotesFolderId]);
 
   const handleLinkGDrive = () => {
     // Redirect to backend Google OAuth flow
@@ -76,28 +125,52 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
 
   const handleSaveFolder = (e) => {
     e.preventDefault();
+    if (!folderIdInput) return;
+
+    setIsLoading(true);
     fetch('/api/config/folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ folder_id: folderIdInput })
     })
       .then(res => {
-        if (res.ok) {
-          // Immediately start checking sync status!
-          setSyncStatus({ active: true, current: 0, total: 0, error: '' });
-          setTimeout(() => {
-            fetch('/api/sync/status')
-              .then(res => res.json())
-              .then(data => {
-                setSyncStatus(data || { active: true, current: 0, total: 0, error: '' });
-              })
-              .catch(err => console.error(err));
-          }, 200);
-        } else {
-          alert('Failed to configure folder.');
-        }
+        if (res.ok) return res.json();
+        throw new Error("Failed to configure folder");
       })
-      .catch(err => console.error(err));
+      .then(data => {
+        // Save returned folder details
+        setFolderDetails({
+          id: data.folder_id,
+          name: data.folder_name,
+          file_count: data.file_count
+        });
+        
+        // Update user config state
+        setUserConfig(prev => ({
+          ...prev,
+          gdriveNotesFolderId: data.folder_id
+        }));
+
+        setIsEditingFolder(false);
+        setSelectedFolderPreview(null);
+        setIsLoading(false);
+
+        // Immediately start checking sync status!
+        setSyncStatus({ active: true, current: 0, total: 0, error: '' });
+        setTimeout(() => {
+          fetch('/api/sync/status')
+            .then(res => res.json())
+            .then(data => {
+              setSyncStatus(data || { active: true, current: 0, total: 0, error: '' });
+            })
+            .catch(err => console.error(err));
+        }, 200);
+      })
+      .catch(err => {
+        console.error(err);
+        alert('Failed to configure folder.');
+        setIsLoading(false);
+      });
   };
 
   const handleOpenFolderModal = () => {
@@ -186,42 +259,158 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
 
       {/* Directory configuration panel */}
       {userConfig && (
-        <section className="glass-container" style={{ padding: '20px', marginBottom: '40px', borderRadius: '16px' }}>
-          <h3 style={{ marginBottom: '12px', fontWeight: 600 }}>Configure Notebooks Location</h3>
-          <form onSubmit={handleSaveFolder} style={{ display: 'flex', gap: '12px', maxWidth: '650px' }}>
-            <input
-              type="text"
-              placeholder="Enter Google Drive Folder ID containing your notebook PDFs"
-              value={folderIdInput}
-              onChange={(e) => setFolderIdInput(e.target.value)}
-              style={{
-                flex: 1,
-                padding: '10px 16px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-frosted)',
-                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                color: '#fff',
-                outline: 'none',
-                fontFamily: 'var(--font-body)'
-              }}
-            />
-            <button
-              type="button"
-              onClick={handleOpenFolderModal}
-              className="btn"
-              style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-frosted)',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                padding: '10px 16px'
-              }}
-            >
-              📁 Browse Folders
-            </button>
-            <button type="submit" className="btn btn-primary">Save Config</button>
-          </form>
+        <section className="glass-container" style={{ padding: '24px', marginBottom: '40px', borderRadius: '16px', background: 'linear-gradient(135deg, rgba(17, 21, 28, 0.75), rgba(56, 189, 248, 0.02))' }}>
+          {!isEditingFolder && folderDetails ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <span style={{ fontSize: '2.2rem' }}>📁</span>
+                <div>
+                  <h3 style={{ fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    Connected Notes Directory
+                    <span 
+                      style={{ 
+                        fontSize: '0.75rem', 
+                        padding: '4px 8px', 
+                        borderRadius: '9999px', 
+                        background: 'rgba(16, 185, 129, 0.15)', 
+                        color: 'var(--success)', 
+                        fontWeight: 600,
+                        border: '1px solid rgba(16, 185, 129, 0.2)'
+                      }}
+                    >
+                      Active Sync
+                    </span>
+                  </h3>
+                  <p style={{ color: 'var(--text-secondary)', marginTop: '4px', fontSize: '0.95rem' }}>
+                    <strong style={{ color: '#fff' }}>{folderDetails.name}</strong> 
+                    <span style={{ color: 'var(--text-muted)', margin: '0 8px' }}>|</span> 
+                    ID: <code style={{ color: 'var(--accent)', backgroundColor: 'rgba(56, 189, 248, 0.06)', padding: '2px 6px', borderRadius: '4px' }}>{folderDetails.id}</code>
+                  </p>
+                </div>
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ 
+                    fontSize: '0.85rem', 
+                    fontWeight: 600, 
+                    color: 'var(--text-muted)', 
+                    textTransform: 'uppercase', 
+                    letterSpacing: '0.05em' 
+                  }}>
+                    Folder Contents
+                  </span>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent)', marginTop: '2px' }}>
+                    {isDetailsLoading ? 'Loading...' : `${folderDetails.file_count} Files`}
+                  </div>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => setIsEditingFolder(true)}
+                  className="btn btn-secondary"
+                  style={{ borderRadius: '10px', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  ✏️ Change Folder
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h3 style={{ marginBottom: '6px', fontWeight: 600 }}>Configure Notebooks Location</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '16px' }}>
+                Enter the Google Drive folder ID or click "Browse Folders" to select the folder containing your handwritten notes.
+              </p>
+              
+              <form onSubmit={handleSaveFolder} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', gap: '12px', maxWidth: '800px', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Enter Google Drive Folder ID containing your notebook PDFs"
+                    value={folderIdInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFolderIdInput(val);
+                      if (val.trim() === '') {
+                        setSelectedFolderPreview(null);
+                      } else {
+                        setSelectedFolderPreview({
+                          id: val,
+                          name: "Manual Input ID"
+                        });
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      minWidth: '280px',
+                      padding: '10px 16px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-frosted)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: '#fff',
+                      outline: 'none',
+                      fontFamily: 'var(--font-body)'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleOpenFolderModal}
+                    className="btn"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-frosted)',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      padding: '10px 16px'
+                    }}
+                  >
+                    📁 Browse Folders
+                  </button>
+                </div>
+
+                {selectedFolderPreview && (
+                  <div style={{ 
+                    padding: '12px 16px', 
+                    borderRadius: '8px', 
+                    backgroundColor: 'rgba(56, 189, 248, 0.05)', 
+                    border: '1px solid rgba(56, 189, 248, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    maxWidth: '800px'
+                  }}>
+                    <div>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Selected Folder Preview:</span>
+                      <div style={{ fontWeight: 600, color: 'var(--accent)', marginTop: '2px' }}>
+                        {selectedFolderPreview.name} <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.85rem' }}>(ID: {selectedFolderPreview.id})</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button type="submit" className="btn btn-primary" disabled={!folderIdInput}>
+                    💾 Save Config
+                  </button>
+                  
+                  {userConfig.gdriveNotesFolderId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingFolder(false);
+                        setFolderIdInput(userConfig.gdriveNotesFolderId);
+                        setSelectedFolderPreview(null);
+                      }}
+                      className="btn btn-secondary"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </section>
       )}
 
@@ -450,32 +639,12 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                     <div
                       key={folder.id}
                       onClick={() => {
+                        setSelectedFolderPreview({
+                          id: folder.id,
+                          name: folder.name
+                        });
                         setFolderIdInput(folder.id);
                         setIsFolderModalOpen(false);
-                        // Trigger auto-submit!
-                        fetch('/api/config/folder', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ folder_id: folder.id })
-                        })
-                          .then(res => {
-                            if (res.ok) {
-                              setUserConfig(prev => ({ ...prev, gdriveNotesFolderId: folder.id }));
-                              setFolderIdInput(folder.id);
-                              setSyncStatus({ active: true, current: 0, total: 0, error: '' });
-                              setTimeout(() => {
-                                fetch('/api/sync/status')
-                                  .then(res => res.json())
-                                  .then(data => {
-                                    setSyncStatus(data || { active: true, current: 0, total: 0, error: '' });
-                                  })
-                                  .catch(err => console.error(err));
-                              }, 200);
-                            } else {
-                              alert('Failed to configure folder.');
-                            }
-                          })
-                          .catch(err => console.error(err));
                       }}
                       className="glass-container"
                       style={{

@@ -525,6 +525,72 @@ type ConfigureFolderRequest struct {
 	FolderID string `json:"folder_id"`
 }
 
+// fetchFolderDetails queries Google Drive for specific folder details (name and file count).
+func (s *Server) fetchFolderDetails(ctx context.Context, username string, config *pb.UserConfig, folderID string) (string, int, error) {
+	if config.GdriveOauthToken == "" {
+		return "", 0, fmt.Errorf("gdrive oauth token not configured")
+	}
+
+	token, err := s.refreshGDriveTokenIfNeeded(ctx, username, config)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to validate google tokens: %w", err)
+	}
+
+	// 1. Fetch folder metadata (name)
+	folderURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s?fields=name", folderID)
+	fReq, err := http.NewRequestWithContext(ctx, "GET", folderURL, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create folder request: %w", err)
+	}
+	fReq.Header.Set("Authorization", "Bearer "+token)
+
+	fResp, err := http.DefaultClient.Do(fReq)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to execute folder request: %w", err)
+	}
+	defer fResp.Body.Close()
+
+	if fResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(fResp.Body)
+		return "", 0, fmt.Errorf("google drive API returned status %s for folder: %s", fResp.Status, string(body))
+	}
+
+	var folderData struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(fResp.Body).Decode(&folderData); err != nil {
+		return "", 0, fmt.Errorf("failed to decode folder details: %w", err)
+	}
+
+	// 2. Query folder for count of files inside it
+	filesURL := fmt.Sprintf("https://www.googleapis.com/drive/v3/files?q='%s'+in+parents+and+trashed=false&fields=files(id)&pageSize=1000", folderID)
+	filesReq, err := http.NewRequestWithContext(ctx, "GET", filesURL, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to create files request: %w", err)
+	}
+	filesReq.Header.Set("Authorization", "Bearer "+token)
+
+	filesResp, err := http.DefaultClient.Do(filesReq)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to execute files request: %w", err)
+	}
+	defer filesResp.Body.Close()
+
+	if filesResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(filesResp.Body)
+		return "", 0, fmt.Errorf("google drive API returned status %s for files count: %s", filesResp.Status, string(body))
+	}
+
+	var filesData struct {
+		Files []interface{} `json:"files"`
+	}
+	if err := json.NewDecoder(filesResp.Body).Decode(&filesData); err != nil {
+		return "", 0, fmt.Errorf("failed to decode files count: %w", err)
+	}
+
+	return folderData.Name, len(filesData.Files), nil
+}
+
 // HandleConfigureFolder handles setting the Google Drive Notes folder ID.
 func (s *Server) HandleConfigureFolder(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -562,13 +628,80 @@ func (s *Server) HandleConfigureFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	folderName := req.FolderID
+	fileCount := 0
+	if config.GdriveOauthToken != "" {
+		name, count, err := s.fetchFolderDetails(ctx, username, config, req.FolderID)
+		if err == nil {
+			folderName = name
+			fileCount = count
+		}
+	}
+
 	if s.syncProvider != nil {
 		go func() {
 			_ = s.syncProvider.SyncUserNotes(context.Background(), username)
 		}()
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"folder_id":   req.FolderID,
+		"folder_name": folderName,
+		"file_count":  fileCount,
+	})
+}
+
+// HandleGetFolderDetails handles retrieving details of a Google Drive folder.
+func (s *Server) HandleGetFolderDetails(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := cookie.Value
+	ctx := r.Context()
+
+	folderID := r.URL.Query().Get("folder_id")
+	if folderID == "" {
+		http.Error(w, "missing folder_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		http.Error(w, "user config not found", http.StatusNotFound)
+		return
+	}
+
+	folderName := folderID
+	fileCount := 0
+
+	if config.GdriveOauthToken == "" {
+		http.Error(w, "gdrive oauth token not configured", http.StatusBadRequest)
+		return
+	}
+
+	name, count, err := s.fetchFolderDetails(ctx, username, config, folderID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to get folder details: %v", err), http.StatusBadRequest)
+		return
+	}
+	folderName = name
+	fileCount = count
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"folder_id":   folderID,
+		"folder_name": folderName,
+		"file_count":  fileCount,
+	})
 }
 
 // HandleGetSyncStatus handles checking the real-time sync progress.
