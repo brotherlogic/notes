@@ -50,18 +50,18 @@ func TestSyncUserNotes(t *testing.T) {
 		t.Fatalf("Failed to preset user: %v", err)
 	}
 
-	// Set up mock Google Drive files
+	// Set up mock Google Drive files with a multi-page .note file
 	mockGDrive := &MockGDriveClient{
 		Files: []*sync.GDriveFile{
 			{
-				ID:          "file_page_1",
-				Name:        "Notebook 1 - Page 1.png",
-				MimeType:    "image/png",
+				ID:          "file_note_1",
+				Name:        "Lectures.note",
+				MimeType:    "application/octet-stream",
 				UpdatedTime: 1600000000,
 			},
 		},
 		Data: map[string][]byte{
-			"file_page_1": []byte("mock_png_image_bytes"),
+			"file_note_1": []byte("pages=2"), // ConvertNoteToPNGs will parse this to generate 2 mock pages
 		},
 	}
 
@@ -74,35 +74,48 @@ func TestSyncUserNotes(t *testing.T) {
 		t.Fatalf("SyncUserNotes failed: %v", err)
 	}
 
-	// 2. Verify that a Notebook was created in storage
-	notebookID := "folder_123"
+	// 2. Verify that a Notebook was created using the .note file GDrive ID in storage
+	notebookID := "file_note_1"
 	notebook, err := store.GetNotebook(ctx, notebookID)
 	if err != nil {
 		t.Fatalf("Failed to retrieve synced notebook: %v", err)
 	}
 
-	if notebook.Title != "folder_123" {
-		t.Errorf("Expected notebook title 'folder_123', got %q", notebook.Title)
+	if notebook.Title != "Lectures" {
+		t.Errorf("Expected notebook title 'Lectures', got %q", notebook.Title)
 	}
 
-	if len(notebook.Pages) != 1 {
-		t.Fatalf("Expected 1 synced page, got %d", len(notebook.Pages))
+	if len(notebook.Pages) != 2 {
+		t.Fatalf("Expected 2 synced pages, got %d", len(notebook.Pages))
 	}
 
-	page := notebook.Pages[0]
-	if page.DriveFileId != "file_page_1" {
-		t.Errorf("Expected page DriveFileId 'file_page_1', got %q", page.DriveFileId)
+	// Verify page 1
+	page1 := notebook.Pages[0]
+	if page1.DriveFileId != "file_note_1" {
+		t.Errorf("Expected page 1 DriveFileId 'file_note_1', got %q", page1.DriveFileId)
+	}
+	if page1.PageNumber != 1 {
+		t.Errorf("Expected page 1 PageNumber 1, got %d", page1.PageNumber)
 	}
 
-	// 3. Verify that the raw binary file was saved to the temp disk directory
-	expectedFilePath := filepath.Join(tempDir, page.Id+".bin")
-	data, err := os.ReadFile(expectedFilePath)
-	if err != nil {
-		t.Fatalf("Failed to read downloaded binary page file: %v", err)
+	// Verify page 2
+	page2 := notebook.Pages[1]
+	if page2.DriveFileId != "file_note_1" {
+		t.Errorf("Expected page 2 DriveFileId 'file_note_1', got %q", page2.DriveFileId)
+	}
+	if page2.PageNumber != 2 {
+		t.Errorf("Expected page 2 PageNumber 2, got %d", page2.PageNumber)
 	}
 
-	if string(data) != "mock_png_image_bytes" {
-		t.Errorf("Expected file contents 'mock_png_image_bytes', got %q", string(data))
+	// 3. Verify that the raw binary page files were saved to the temp disk directory
+	expectedFilePath1 := filepath.Join(tempDir, page1.Id+".bin")
+	if _, err := os.Stat(expectedFilePath1); os.IsNotExist(err) {
+		t.Fatalf("Page 1 binary file not found at: %s", expectedFilePath1)
+	}
+
+	expectedFilePath2 := filepath.Join(tempDir, page2.Id+".bin")
+	if _, err := os.Stat(expectedFilePath2); os.IsNotExist(err) {
+		t.Fatalf("Page 2 binary file not found at: %s", expectedFilePath2)
 	}
 }
 
@@ -141,12 +154,12 @@ func TestSyncAllUsers(t *testing.T) {
 		Files: []*sync.GDriveFile{
 			{
 				ID:          "file_abc",
-				Name:        "Notebook - Page 1.png",
+				Name:        "Notebook.note",
 				UpdatedTime: 1600000000,
 			},
 		},
 		Data: map[string][]byte{
-			"file_abc": []byte("image_data"),
+			"file_abc": []byte("pages=1"),
 		},
 	}
 
@@ -158,14 +171,9 @@ func TestSyncAllUsers(t *testing.T) {
 		t.Fatalf("SyncAllUsers failed: %v", err)
 	}
 
-	// 2. Verify that both notebooks were created
-	_, err = store.GetNotebook(ctx, "folder_one")
+	// 2. Verify that both notebooks were created with GDrive IDs as notebook keys
+	_, err = store.GetNotebook(ctx, "file_abc")
 	if err != nil {
-		t.Errorf("Failed to retrieve notebook for user-one: %v", err)
-	}
-
-	_, err = store.GetNotebook(ctx, "folder_two")
-	if err != nil {
-		t.Errorf("Failed to retrieve notebook for user-two: %v", err)
+		t.Errorf("Failed to retrieve notebook: %v", err)
 	}
 }

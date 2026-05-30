@@ -21,7 +21,6 @@ jobs:
       - name: Create or Update Pull Request
         env:
           PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
           echo "Processing branch push: $BRANCH_NAME by @${{ github.actor }}"
@@ -29,25 +28,12 @@ jobs:
           # Clean and trim the personal token to prevent invalid header field value errors
           CLEANED_TOKEN=$(echo "$PERSONAL_TOKEN" | tr -d '\r\n[:space:]')
           
-          # Actively validate the PERSONAL_TOKEN credentials
-          TOKEN_VALID=false
-          if [ -n "$CLEANED_TOKEN" ]; then
-            echo "Validating PERSONAL_TOKEN credentials..."
-            if GH_TOKEN="$CLEANED_TOKEN" gh api "repos/${{ github.repository }}" --json name > /dev/null 2>&1; then
-              echo "PERSONAL_TOKEN credentials are valid!"
-              TOKEN_VALID=true
-            else
-              echo "WARNING: PERSONAL_TOKEN credentials returned HTTP 401 Bad Credentials or expired."
-            fi
+          if [ -z "$CLEANED_TOKEN" ]; then
+            echo "ERROR: PERSONAL_TOKEN is not configured or is empty."
+            exit 1
           fi
 
-          if [ "$TOKEN_VALID" = true ]; then
-            echo "Using provided PERSONAL_TOKEN for authentication."
-            export GH_TOKEN="$CLEANED_TOKEN"
-          else
-            echo "Falling back to GITHUB_TOKEN for workflow authentication."
-            export GH_TOKEN="$GITHUB_TOKEN"
-          fi
+          export GH_TOKEN="$CLEANED_TOKEN"
 
           # Check if a pull request already exists for this head branch
           PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number')

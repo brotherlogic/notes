@@ -562,7 +562,7 @@ func TestHandleGetFolderDetails(t *testing.T) {
 					Body:       io.NopCloser(strings.NewReader(mockMetaJSON)),
 				}, nil
 			} else if strings.Contains(req.URL.Path, "/files") && strings.Contains(req.URL.RawQuery, "in+parents") {
-				mockFilesJSON := `{"files": [{"id": "file_1"}, {"id": "file_2"}, {"id": "file_3"}]}`
+				mockFilesJSON := `{"files": [{"id": "file_1", "name": "a.note"}, {"id": "file_2", "name": "b.note"}, {"id": "file_3", "name": "c.note"}]}`
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Header:     make(http.Header),
