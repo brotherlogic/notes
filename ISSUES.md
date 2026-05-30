@@ -152,7 +152,7 @@ Seraphine analyzes the technical implementation plan proposed in the current iss
 #### 3. Programmatic Sub-Issue Creation
 For each identified component, Seraphine programmatically files a new GitHub sub-issue under the current issue.
 * **Sub-Issue Title:** Must use the format `[Sub-Issue] <Action>` (e.g., `[Sub-Issue] Implement pstore serialization for note status`).
-* **Sub-Issue Body:** Must include a copy of the parent implementation plan to provide the full technical context for the junior engineer working on the task.
+* **Sub-Issue Body:** Sub-issues should stand alone and do not need to include the parent implementation plan. Context can be picked up from the bug tree when needed.
 * **Sub-Issue Label:** Must be marked with the `seraphine-ready-to-implement` label.
 
 #### 4. Transition & Label Cleanup
