@@ -60,7 +60,7 @@ func ConvertNoteToPNGs(ctx context.Context, name string, data []byte) ([][]byte,
 func extractPNGs(data []byte) [][]byte {
 	var pngs [][]byte
 	pngHeader := []byte("\x89PNG\r\n\x1a\n")
-	
+
 	idx := 0
 	for {
 		start := bytes.Index(data[idx:], pngHeader)
@@ -68,13 +68,13 @@ func extractPNGs(data []byte) [][]byte {
 			break
 		}
 		start += idx
-		
+
 		// Find the end chunk
 		end := bytes.Index(data[start:], []byte("IEND"))
 		if end == -1 {
 			break
 		}
-		
+
 		// Include IEND and its 4-byte CRC (total 8 bytes after IEND start)
 		totalLength := end + 8
 		if start+totalLength <= len(data) {
@@ -83,7 +83,7 @@ func extractPNGs(data []byte) [][]byte {
 				pngs = append(pngs, pngData)
 			}
 		}
-		
+
 		idx = start + totalLength
 	}
 	return pngs
@@ -96,9 +96,9 @@ func GenerateMockPage(name string, pageNum int) ([]byte, error) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 
 	// Harmony curated palette (Modern Dark Mode)
-	bgColor := color.RGBA{13, 17, 23, 255}    // Sleek deep gray-black
-	gridColor := color.RGBA{22, 27, 34, 255}  // Subtle grid lines
-	accentColor := color.RGBA{56, 189, 248, 255} // Outfit neon blue glow
+	bgColor := color.RGBA{13, 17, 23, 255}        // Sleek deep gray-black
+	gridColor := color.RGBA{22, 27, 34, 255}      // Subtle grid lines
+	accentColor := color.RGBA{56, 189, 248, 255}  // Outfit neon blue glow
 	strokeColor := color.RGBA{240, 246, 252, 255} // Sharp crisp white text/pen
 
 	// 1. Draw rich background grid

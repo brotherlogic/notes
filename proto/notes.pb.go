@@ -21,6 +21,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type NotebookStatus int32
+
+const (
+	NotebookStatus_NOTEBOOK_STATUS_UNKNOWN    NotebookStatus = 0
+	NotebookStatus_NOTEBOOK_ACTIVE            NotebookStatus = 1
+	NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE NotebookStatus = 2
+	NotebookStatus_NOTEBOOK_UNPROCESSABLE     NotebookStatus = 3
+)
+
+// Enum value maps for NotebookStatus.
+var (
+	NotebookStatus_name = map[int32]string{
+		0: "NOTEBOOK_STATUS_UNKNOWN",
+		1: "NOTEBOOK_ACTIVE",
+		2: "NOTEBOOK_DELETED_ON_REMOTE",
+		3: "NOTEBOOK_UNPROCESSABLE",
+	}
+	NotebookStatus_value = map[string]int32{
+		"NOTEBOOK_STATUS_UNKNOWN":    0,
+		"NOTEBOOK_ACTIVE":            1,
+		"NOTEBOOK_DELETED_ON_REMOTE": 2,
+		"NOTEBOOK_UNPROCESSABLE":     3,
+	}
+)
+
+func (x NotebookStatus) Enum() *NotebookStatus {
+	p := new(NotebookStatus)
+	*p = x
+	return p
+}
+
+func (x NotebookStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (NotebookStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_notes_proto_enumTypes[0].Descriptor()
+}
+
+func (NotebookStatus) Type() protoreflect.EnumType {
+	return &file_proto_notes_proto_enumTypes[0]
+}
+
+func (x NotebookStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use NotebookStatus.Descriptor instead.
+func (NotebookStatus) EnumDescriptor() ([]byte, []int) {
+	return file_proto_notes_proto_rawDescGZIP(), []int{0}
+}
+
 type UserConfig struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	GithubUsername      string                 `protobuf:"bytes,1,opt,name=github_username,json=githubUsername,proto3" json:"github_username,omitempty"`
@@ -123,6 +175,7 @@ type Page struct {
 	CreatedTime   int64                  `protobuf:"varint,6,opt,name=created_time,json=createdTime,proto3" json:"created_time,omitempty"`
 	UpdatedTime   int64                  `protobuf:"varint,7,opt,name=updated_time,json=updatedTime,proto3" json:"updated_time,omitempty"`
 	LocalFilePath string                 `protobuf:"bytes,8,opt,name=local_file_path,json=localFilePath,proto3" json:"local_file_path,omitempty"`
+	ImageHash     string                 `protobuf:"bytes,9,opt,name=image_hash,json=imageHash,proto3" json:"image_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -213,6 +266,13 @@ func (x *Page) GetLocalFilePath() string {
 	return ""
 }
 
+func (x *Page) GetImageHash() string {
+	if x != nil {
+		return x.ImageHash
+	}
+	return ""
+}
+
 type Notebook struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -221,6 +281,7 @@ type Notebook struct {
 	GithubProject string                 `protobuf:"bytes,4,opt,name=github_project,json=githubProject,proto3" json:"github_project,omitempty"` // Format: "owner/repo"
 	Pages         []*Page                `protobuf:"bytes,5,rep,name=pages,proto3" json:"pages,omitempty"`
 	LastUpdated   int64                  `protobuf:"varint,6,opt,name=last_updated,json=lastUpdated,proto3" json:"last_updated,omitempty"`
+	Status        NotebookStatus         `protobuf:"varint,7,opt,name=status,proto3,enum=notes.NotebookStatus" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -297,6 +358,13 @@ func (x *Notebook) GetLastUpdated() int64 {
 	return 0
 }
 
+func (x *Notebook) GetStatus() NotebookStatus {
+	if x != nil {
+		return x.Status
+	}
+	return NotebookStatus_NOTEBOOK_STATUS_UNKNOWN
+}
+
 var File_proto_notes_proto protoreflect.FileDescriptor
 
 const file_proto_notes_proto_rawDesc = "" +
@@ -310,7 +378,7 @@ const file_proto_notes_proto_rawDesc = "" +
 	"\x14gdrive_refresh_token\x18\x04 \x01(\tR\x12gdriveRefreshToken\x12.\n" +
 	"\x13gdrive_token_expiry\x18\x05 \x01(\x03R\x11gdriveTokenExpiry\x123\n" +
 	"\x16gdrive_notes_folder_id\x18\x06 \x01(\tR\x13gdriveNotesFolderId\x12$\n" +
-	"\x0elast_sync_time\x18\a \x01(\x03R\flastSyncTime\"\x8e\x02\n" +
+	"\x0elast_sync_time\x18\a \x01(\x03R\flastSyncTime\"\xad\x02\n" +
 	"\x04Page\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vpage_number\x18\x02 \x01(\x05R\n" +
@@ -320,14 +388,22 @@ const file_proto_notes_proto_rawDesc = "" +
 	"\tprocessed\x18\x05 \x01(\bR\tprocessed\x12!\n" +
 	"\fcreated_time\x18\x06 \x01(\x03R\vcreatedTime\x12!\n" +
 	"\fupdated_time\x18\a \x01(\x03R\vupdatedTime\x12&\n" +
-	"\x0flocal_file_path\x18\b \x01(\tR\rlocalFilePath\"\xc5\x01\n" +
+	"\x0flocal_file_path\x18\b \x01(\tR\rlocalFilePath\x12\x1d\n" +
+	"\n" +
+	"image_hash\x18\t \x01(\tR\timageHash\"\xf4\x01\n" +
 	"\bNotebook\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12&\n" +
 	"\x0fdrive_folder_id\x18\x03 \x01(\tR\rdriveFolderId\x12%\n" +
 	"\x0egithub_project\x18\x04 \x01(\tR\rgithubProject\x12!\n" +
 	"\x05pages\x18\x05 \x03(\v2\v.notes.PageR\x05pages\x12!\n" +
-	"\flast_updated\x18\x06 \x01(\x03R\vlastUpdatedB%Z#github.com/brotherlogic/notes/protob\x06proto3"
+	"\flast_updated\x18\x06 \x01(\x03R\vlastUpdated\x12-\n" +
+	"\x06status\x18\a \x01(\x0e2\x15.notes.NotebookStatusR\x06status*~\n" +
+	"\x0eNotebookStatus\x12\x1b\n" +
+	"\x17NOTEBOOK_STATUS_UNKNOWN\x10\x00\x12\x13\n" +
+	"\x0fNOTEBOOK_ACTIVE\x10\x01\x12\x1e\n" +
+	"\x1aNOTEBOOK_DELETED_ON_REMOTE\x10\x02\x12\x1a\n" +
+	"\x16NOTEBOOK_UNPROCESSABLE\x10\x03B%Z#github.com/brotherlogic/notes/protob\x06proto3"
 
 var (
 	file_proto_notes_proto_rawDescOnce sync.Once
@@ -341,19 +417,22 @@ func file_proto_notes_proto_rawDescGZIP() []byte {
 	return file_proto_notes_proto_rawDescData
 }
 
+var file_proto_notes_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_proto_notes_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_proto_notes_proto_goTypes = []any{
-	(*UserConfig)(nil), // 0: notes.UserConfig
-	(*Page)(nil),       // 1: notes.Page
-	(*Notebook)(nil),   // 2: notes.Notebook
+	(NotebookStatus)(0), // 0: notes.NotebookStatus
+	(*UserConfig)(nil),  // 1: notes.UserConfig
+	(*Page)(nil),        // 2: notes.Page
+	(*Notebook)(nil),    // 3: notes.Notebook
 }
 var file_proto_notes_proto_depIdxs = []int32{
-	1, // 0: notes.Notebook.pages:type_name -> notes.Page
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 0: notes.Notebook.pages:type_name -> notes.Page
+	0, // 1: notes.Notebook.status:type_name -> notes.NotebookStatus
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_notes_proto_init() }
@@ -366,13 +445,14 @@ func file_proto_notes_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_notes_proto_rawDesc), len(file_proto_notes_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_proto_notes_proto_goTypes,
 		DependencyIndexes: file_proto_notes_proto_depIdxs,
+		EnumInfos:         file_proto_notes_proto_enumTypes,
 		MessageInfos:      file_proto_notes_proto_msgTypes,
 	}.Build()
 	File_proto_notes_proto = out.File

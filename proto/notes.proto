@@ -4,6 +4,13 @@ package notes;
 
 option go_package = "github.com/brotherlogic/notes/proto";
 
+enum NotebookStatus {
+  NOTEBOOK_STATUS_UNKNOWN = 0;
+  NOTEBOOK_ACTIVE = 1;
+  NOTEBOOK_DELETED_ON_REMOTE = 2;
+  NOTEBOOK_UNPROCESSABLE = 3;
+}
+
 message UserConfig {
   string github_username = 1;
   string github_oauth_token = 2;
@@ -23,6 +30,7 @@ message Page {
   int64 created_time = 6;
   int64 updated_time = 7;
   string local_file_path = 8;
+  string image_hash = 9;
 }
 
 message Notebook {
@@ -32,4 +40,5 @@ message Notebook {
   string github_project = 4; // Format: "owner/repo"
   repeated Page pages = 5;
   int64 last_updated = 6;
+  NotebookStatus status = 7;
 }
