@@ -5,6 +5,10 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
   const [notebooks, setNotebooks] = useState([]);
   const [folderIdInput, setFolderIdInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [gdriveFolders, setGdriveFolders] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isModalLoading, setIsModalLoading] = useState(false);
 
   // Fetch initial configs and notebooks
   useEffect(() => {
@@ -48,6 +52,26 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
         }
       })
       .catch(err => console.error(err));
+  };
+
+  const handleOpenFolderModal = () => {
+    setIsFolderModalOpen(true);
+    setIsModalLoading(true);
+    fetch('/api/gdrive/folders')
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to fetch folders");
+        return res.json();
+      })
+      .then(data => {
+        setGdriveFolders(data || []);
+        setIsModalLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        alert("Could not load folders. Ensure Google Drive is linked and active.");
+        setIsModalLoading(false);
+        setIsFolderModalOpen(false);
+      });
   };
 
   return (
@@ -118,7 +142,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
       {userConfig && (
         <section className="glass-container" style={{ padding: '20px', marginBottom: '40px', borderRadius: '16px' }}>
           <h3 style={{ marginBottom: '12px', fontWeight: 600 }}>Configure Notebooks Location</h3>
-          <form onSubmit={handleSaveFolder} style={{ display: 'flex', gap: '12px', maxWidth: '600px' }}>
+          <form onSubmit={handleSaveFolder} style={{ display: 'flex', gap: '12px', maxWidth: '650px' }}>
             <input
               type="text"
               placeholder="Enter Google Drive Folder ID containing your notebook PDFs"
@@ -135,6 +159,21 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                 fontFamily: 'var(--font-body)'
               }}
             />
+            <button
+              type="button"
+              onClick={handleOpenFolderModal}
+              className="btn"
+              style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-frosted)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                padding: '10px 16px'
+              }}
+            >
+              📁 Browse Folders
+            </button>
             <button type="submit" className="btn btn-primary">Save Config</button>
           </form>
         </section>
@@ -180,6 +219,149 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
           </div>
         )}
       </section>
+
+      {/* Google Drive Folder Selector Modal */}
+      {isFolderModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(12px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div className="glass-container" style={{
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            padding: '30px',
+            borderRadius: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            border: '1px solid var(--border-frosted)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>📁 Select Notes Folder</h3>
+              <button
+                onClick={() => setIsFolderModalOpen(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-secondary)',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: 0 }}>
+              Select a Google Drive folder containing your notebook PDF files.
+            </p>
+
+            {/* Search Input */}
+            <input
+              type="text"
+              placeholder="🔍 Search folders..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                borderRadius: '10px',
+                border: '1px solid var(--border-frosted)',
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                color: '#fff',
+                outline: 'none',
+                fontFamily: 'var(--font-body)'
+              }}
+            />
+
+            {/* Folder List container */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              minHeight: '200px',
+              paddingRight: '4px'
+            }}>
+              {isModalLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1, color: 'var(--text-secondary)' }}>
+                  Loading GDrive folders...
+                </div>
+              ) : gdriveFolders.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1, color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                  No matching folders found.
+                </div>
+              ) : (
+                gdriveFolders
+                  .filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                  .map(folder => (
+                    <div
+                      key={folder.id}
+                      onClick={() => {
+                        setFolderIdInput(folder.id);
+                        setIsFolderModalOpen(false);
+                        // Trigger auto-submit!
+                        fetch('/api/config/folder', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ folder_id: folder.id })
+                        })
+                          .then(res => {
+                            if (res.ok) {
+                              alert(`Successfully configured and synced notebook folder: "${folder.name}"!`);
+                              // Trigger a page reload to pull new notebooks
+                              window.location.reload();
+                            } else {
+                              alert('Failed to configure folder.');
+                            }
+                          })
+                          .catch(err => console.error(err));
+                      }}
+                      className="glass-container"
+                      style={{
+                        padding: '12px 16px',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        border: '1px solid transparent',
+                        transition: 'var(--transition-smooth)'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                        e.currentTarget.style.borderColor = 'var(--accent-glow)';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.borderColor = 'transparent';
+                      }}
+                    >
+                      <span style={{ fontSize: '1.25rem' }}>📁</span>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontWeight: 500, fontSize: '0.95rem' }}>{folder.name}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>ID: {folder.id}</span>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

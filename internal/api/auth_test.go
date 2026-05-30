@@ -2,10 +2,14 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brotherlogic/notes/internal/api"
 	"github.com/brotherlogic/notes/internal/storage"
@@ -342,3 +346,74 @@ func TestGetRedirectURIVariations(t *testing.T) {
 		t.Errorf("Expected redirect_uri to contain overridden %q, got %q", expectedOverride, location3)
 	}
 }
+
+type mockTransport struct {
+	roundTripFunc func(req *http.Request) (*http.Response, error)
+}
+
+func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.roundTripFunc(req)
+}
+
+func TestHandleListGDriveFolders(t *testing.T) {
+	// Backup original transport and restore it after test
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-user"
+
+	// 1. Preset config with active token (non-expired)
+	err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:     username,
+		GdriveOauthToken:   "ya29.active_token",
+		GdriveTokenExpiry:  time.Now().Add(1 * time.Hour).Unix(),
+		GdriveRefreshToken: "1//refresh",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user config: %v", err)
+	}
+
+	// Mock Google Drive API response
+	mockResponseJSON := `{"files": [{"id": "folder_123", "name": "My Notes"}]}`
+	http.DefaultClient.Transport = &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "/files") {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(mockResponseJSON)),
+				}, nil
+			}
+			return nil, fmt.Errorf("unexpected request URL: %s", req.URL.String())
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/gdrive/folders", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	server.HandleListGDriveFolders(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	var folders []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&folders); err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	if len(folders) != 1 || folders[0].ID != "folder_123" || folders[0].Name != "My Notes" {
+		t.Errorf("Unexpected folders list returned: %+v", folders)
+	}
+}
+
