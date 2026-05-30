@@ -9,8 +9,9 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
   const [gdriveFolders, setGdriveFolders] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalLoading, setIsModalLoading] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ active: false, current: 0, total: 0, error: '' });
 
-  // Fetch initial configs and notebooks
+  // Fetch initial configs, notebooks, and active sync status
   useEffect(() => {
     fetch('/api/user/config')
       .then(res => res.json())
@@ -30,7 +31,43 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
         console.error("Error fetching notebooks:", err);
         setIsLoading(false);
       });
+
+    fetch('/api/sync/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.active) {
+          setSyncStatus(data);
+        }
+      })
+      .catch(err => console.error("Error checking initial sync status:", err));
   }, []);
+
+  // Poll sync status when active
+  useEffect(() => {
+    if (!syncStatus.active) return;
+
+    const interval = setInterval(() => {
+      fetch('/api/sync/status')
+        .then(res => res.json())
+        .then(data => {
+          setSyncStatus(data || { active: false, current: 0, total: 0, error: '' });
+          // If sync finished, refresh notebooks!
+          if (data && !data.active) {
+            fetch('/api/notebooks')
+              .then(res => res.json())
+              .then(nbs => {
+                setNotebooks(nbs || []);
+              })
+              .catch(err => console.error("Error refreshing notebooks:", err));
+          }
+        })
+        .catch(err => {
+          console.error("Error polling sync status:", err);
+        });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [syncStatus.active]);
 
   const handleLinkGDrive = () => {
     // Redirect to backend Google OAuth flow
@@ -46,7 +83,16 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
     })
       .then(res => {
         if (res.ok) {
-          alert('Google Drive notes folder configured successfully!');
+          // Immediately start checking sync status!
+          setSyncStatus({ active: true, current: 0, total: 0, error: '' });
+          setTimeout(() => {
+            fetch('/api/sync/status')
+              .then(res => res.json())
+              .then(data => {
+                setSyncStatus(data || { active: true, current: 0, total: 0, error: '' });
+              })
+              .catch(err => console.error(err));
+          }, 200);
         } else {
           alert('Failed to configure folder.');
         }
@@ -177,6 +223,99 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
             <button type="submit" className="btn btn-primary">Save Config</button>
           </form>
         </section>
+      )}
+
+      {/* Real-time Google Drive Syncing Progress Card */}
+      {syncStatus.active && (
+        <div 
+          className="glass-container sync-pulse" 
+          style={{ 
+            padding: '20px', 
+            marginBottom: '40px', 
+            borderRadius: '16px',
+            border: '1px solid rgba(56, 189, 248, 0.3)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+            background: 'linear-gradient(135deg, rgba(17, 21, 28, 0.85), rgba(56, 189, 248, 0.05))',
+            transition: 'var(--transition-smooth)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span className="spin-slow" style={{ fontSize: '1.25rem', display: 'inline-block' }}>🔄</span>
+              <h4 style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Synchronizing GDrive Notebooks...</h4>
+            </div>
+            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--accent)' }}>
+              {syncStatus.total > 0 ? `${Math.round((syncStatus.current / syncStatus.total) * 100)}%` : 'Initializing...'}
+            </span>
+          </div>
+
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0 }}>
+            {syncStatus.total > 0 
+              ? `Processing page files: ${syncStatus.current} of ${syncStatus.total} downloaded.`
+              : 'Listing Google Drive directory and resolving files...'
+            }
+          </p>
+
+          {/* Progress bar wrapper */}
+          <div style={{ 
+            width: '100%', 
+            height: '8px', 
+            backgroundColor: 'rgba(255, 255, 255, 0.05)', 
+            borderRadius: '9999px',
+            overflow: 'hidden',
+            border: '1px solid var(--border-frosted)'
+          }}>
+            <div style={{ 
+              width: `${syncStatus.total > 0 ? (syncStatus.current / syncStatus.total) * 100 : 0}%`, 
+              height: '100%', 
+              background: 'linear-gradient(90deg, var(--accent), #0ea5e9)',
+              borderRadius: '9999px',
+              transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+            }} />
+          </div>
+        </div>
+      )}
+
+      {syncStatus.error && (
+        <div 
+          className="glass-container" 
+          style={{ 
+            padding: '20px', 
+            marginBottom: '40px', 
+            borderRadius: '16px',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            background: 'linear-gradient(135deg, rgba(17, 21, 28, 0.85), rgba(239, 68, 68, 0.05))',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '1.5rem', color: 'var(--danger)' }}>⚠️</span>
+            <div>
+              <h4 style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>Sync Failed</h4>
+              <p style={{ fontSize: '0.875rem', color: '#fca5a5', margin: 0 }}>{syncStatus.error}</p>
+            </div>
+          </div>
+          <button 
+            className="btn"
+            onClick={() => setSyncStatus(prev => ({ ...prev, error: '' }))}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid var(--border-frosted)',
+              borderRadius: '8px',
+              fontSize: '0.8125rem',
+              color: 'var(--text-primary)',
+              cursor: 'pointer'
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       {/* Notebook Grid */}
@@ -321,9 +460,17 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                         })
                           .then(res => {
                             if (res.ok) {
-                              alert(`Successfully configured and synced notebook folder: "${folder.name}"!`);
-                              // Trigger a page reload to pull new notebooks
-                              window.location.reload();
+                              setUserConfig(prev => ({ ...prev, gdriveNotesFolderId: folder.id }));
+                              setFolderIdInput(folder.id);
+                              setSyncStatus({ active: true, current: 0, total: 0, error: '' });
+                              setTimeout(() => {
+                                fetch('/api/sync/status')
+                                  .then(res => res.json())
+                                  .then(data => {
+                                    setSyncStatus(data || { active: true, current: 0, total: 0, error: '' });
+                                  })
+                                  .catch(err => console.error(err));
+                              }, 200);
                             } else {
                               alert('Failed to configure folder.');
                             }

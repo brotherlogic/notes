@@ -13,6 +13,7 @@ import (
 
 	"github.com/brotherlogic/notes/internal/api"
 	"github.com/brotherlogic/notes/internal/storage"
+	"github.com/brotherlogic/notes/internal/sync"
 	pb "github.com/brotherlogic/notes/proto"
 	pstore_client "github.com/brotherlogic/pstore/client"
 )
@@ -417,3 +418,99 @@ func TestHandleListGDriveFolders(t *testing.T) {
 	}
 }
 
+type mockSyncProgressProvider struct {
+	progress *sync.SyncProgress
+	synced   chan string
+}
+
+func (m *mockSyncProgressProvider) GetSyncProgress(username string) *sync.SyncProgress {
+	return m.progress
+}
+
+func (m *mockSyncProgressProvider) SyncUserNotes(ctx context.Context, username string) error {
+	if m.synced != nil {
+		m.synced <- username
+	}
+	return nil
+}
+
+func TestHandleGetSyncStatus(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	username := "test-user"
+	mockProvider := &mockSyncProgressProvider{
+		progress: &sync.SyncProgress{
+			Active:  true,
+			Current: 5,
+			Total:   10,
+			Error:   "some error",
+		},
+	}
+	server.SetSyncProvider(mockProvider)
+
+	req := httptest.NewRequest("GET", "/api/sync/status", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	server.HandleGetSyncStatus(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	var status sync.SyncProgress
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !status.Active || status.Current != 5 || status.Total != 10 || status.Error != "some error" {
+		t.Errorf("Unexpected status returned: %+v", status)
+	}
+}
+
+func TestConfigureFolderTriggersSync(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-user"
+
+	err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername: username,
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	syncedChan := make(chan string, 1)
+	mockProvider := &mockSyncProgressProvider{
+		synced: syncedChan,
+	}
+	server.SetSyncProvider(mockProvider)
+
+	payload := `{"folder_id": "drive_folder_xyz789"}`
+	req := httptest.NewRequest("POST", "/api/configure-folder", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+
+	w := httptest.NewRecorder()
+	server.HandleConfigureFolder(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	select {
+	case syncedUser := <-syncedChan:
+		if syncedUser != username {
+			t.Errorf("Expected sync triggered for user %q, got %q", username, syncedUser)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("Timed out waiting for SyncUserNotes to be triggered in background")
+	}
+}

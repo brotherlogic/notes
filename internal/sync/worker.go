@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/brotherlogic/notes/internal/storage"
@@ -26,10 +27,19 @@ type GDriveClient interface {
 	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 }
 
+type SyncProgress struct {
+	Active  bool   `json:"active"`
+	Current int32  `json:"current"`
+	Total   int32  `json:"total"`
+	Error   string `json:"error,omitempty"`
+}
+
 type Worker struct {
-	store     *storage.Storage
-	gdrive    GDriveClient
-	binaryDir string
+	store      *storage.Storage
+	gdrive     GDriveClient
+	binaryDir  string
+	progress   map[string]*SyncProgress
+	progressMu sync.RWMutex
 }
 
 func NewWorker(store *storage.Storage, gdrive GDriveClient, binaryDir string) *Worker {
@@ -37,7 +47,22 @@ func NewWorker(store *storage.Storage, gdrive GDriveClient, binaryDir string) *W
 		store:     store,
 		gdrive:    gdrive,
 		binaryDir: binaryDir,
+		progress:  make(map[string]*SyncProgress),
 	}
+}
+
+func (w *Worker) GetSyncProgress(username string) *SyncProgress {
+	w.progressMu.RLock()
+	defer w.progressMu.RUnlock()
+	if p, exists := w.progress[username]; exists {
+		return &SyncProgress{
+			Active:  p.Active,
+			Current: p.Current,
+			Total:   p.Total,
+			Error:   p.Error,
+		}
+	}
+	return &SyncProgress{Active: false}
 }
 
 // parsePageNumber parses the page number from filenames like "Notebook 1 - Page 5.png" -> 5
@@ -52,7 +77,20 @@ func parsePageNumber(name string) int32 {
 }
 
 // SyncUserNotes polls the configured Google Drive folder for a user and syncs new notes.
-func (s *Worker) SyncUserNotes(ctx context.Context, username string) error {
+func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error) {
+	s.progressMu.Lock()
+	s.progress[username] = &SyncProgress{Active: true, Total: 0, Current: 0}
+	s.progressMu.Unlock()
+
+	defer func() {
+		s.progressMu.Lock()
+		s.progress[username].Active = false
+		if err != nil {
+			s.progress[username].Error = err.Error()
+		}
+		s.progressMu.Unlock()
+	}()
+
 	// 1. Get user configuration
 	config, err := s.store.GetUserConfig(ctx, username)
 	if err != nil {
@@ -70,6 +108,10 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) error {
 		return fmt.Errorf("failed to list drive files: %w", err)
 	}
 
+	s.progressMu.Lock()
+	s.progress[username].Total = int32(len(files))
+	s.progressMu.Unlock()
+
 	var pages []*pb.Page
 
 	// Ensure binary storage directory exists
@@ -79,7 +121,7 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) error {
 	}
 
 	// 3. Process each file
-	for _, file := range files {
+	for i, file := range files {
 		pageID := fmt.Sprintf("%s-page-%s", folderID, file.ID)
 		localPath := filepath.Join(s.binaryDir, pageID+".bin")
 
@@ -107,6 +149,10 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) error {
 		}
 
 		pages = append(pages, page)
+
+		s.progressMu.Lock()
+		s.progress[username].Current = int32(i + 1)
+		s.progressMu.Unlock()
 	}
 
 	// 4. Save Notebook metadata to pstore
