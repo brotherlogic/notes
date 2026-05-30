@@ -20,16 +20,16 @@ jobs:
 
       - name: Create or Update Pull Request
         env:
-          PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+          AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
           echo "Processing branch push: $BRANCH_NAME by @${{ github.actor }}"
 
-          # Clean and trim the personal token to prevent invalid header field value errors
-          CLEANED_TOKEN=$(echo "$PERSONAL_TOKEN" | tr -d '\r\n[:space:]')
+          # Clean and trim the automation token to prevent invalid header field value errors
+          CLEANED_TOKEN=$(echo "$AUTOMATION_TOKEN" | tr -d '\r\n[:space:]')
           
           if [ -z "$CLEANED_TOKEN" ]; then
-            echo "ERROR: PERSONAL_TOKEN is not configured or is empty."
+            echo "ERROR: AUTOMATION_TOKEN is not configured or is empty."
             exit 1
           fi
 
