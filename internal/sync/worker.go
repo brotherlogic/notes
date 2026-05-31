@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +43,7 @@ type Worker struct {
 	binaryDir  string
 	progress   map[string]*SyncProgress
 	progressMu sync.RWMutex
+	activeSync sync.Map
 }
 
 func NewWorker(store *storage.Storage, gdrive GDriveClient, binaryDir string) *Worker {
@@ -79,6 +82,11 @@ func parsePageNumber(name string) int32 {
 
 // SyncUserNotes polls the configured Google Drive folder for a user and syncs new notes.
 func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error) {
+	if _, loaded := s.activeSync.LoadOrStore(username, true); loaded {
+		return fmt.Errorf("sync already in progress for user %s", username)
+	}
+	defer s.activeSync.Delete(username)
+
 	s.progressMu.Lock()
 	s.progress[username] = &SyncProgress{Active: true, Total: 0, Current: 0}
 	s.progressMu.Unlock()
@@ -132,79 +140,144 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 		notebookTitle := strings.TrimSuffix(file.Name, ".note")
 		notebookID := file.ID
 
-		// Download binary .note file bytes
-		data, err := s.gdrive.DownloadFile(ctx, file.ID)
+		err = func() error {
+			// Download binary .note file bytes
+			data, downloadErr := s.gdrive.DownloadFile(ctx, file.ID)
+			if downloadErr != nil {
+				return fmt.Errorf("failed to download file %s: %w", file.ID, downloadErr)
+			}
+
+			// Convert .note bytes to PNG pages
+			pngPages, convertErr := ConvertNoteToPNGs(ctx, notebookTitle, data)
+			if convertErr != nil {
+				return fmt.Errorf("failed to convert .note file %s: %w", file.Name, convertErr)
+			}
+
+			// Retrieve existing notebook to preserve metadata (processed states, linked github projects, image hashes)
+			existingNotebook, getErr := s.store.GetNotebook(ctx, notebookID)
+			processedMap := make(map[int32]bool)
+			githubProjectMap := make(map[int32]string)
+			imageHashMap := make(map[int32]string)
+			if getErr == nil && existingNotebook != nil {
+				for _, p := range existingNotebook.Pages {
+					processedMap[p.PageNumber] = p.Processed
+					githubProjectMap[p.PageNumber] = p.GithubProject
+					imageHashMap[p.PageNumber] = p.ImageHash
+				}
+			}
+
+			var pages []*pb.Page
+			for pageIdx, pngBytes := range pngPages {
+				pageNum := int32(pageIdx + 1)
+				pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
+				localPath := filepath.Join(s.binaryDir, pageID+".bin")
+
+				// Change Detection: Compute the SHA-256 hash of each page's generated PNG bytes.
+				h := sha256.New()
+				h.Write(pngBytes)
+				hashStr := hex.EncodeToString(h.Sum(nil))
+
+				existingHash := imageHashMap[pageNum]
+				_, statErr := os.Stat(localPath)
+				if hashStr != existingHash || os.IsNotExist(statErr) {
+					// Write PNG page bytes to flat filesystem path
+					writeErr := os.WriteFile(localPath, pngBytes, 0644)
+					if writeErr != nil {
+						return fmt.Errorf("failed to write local page file: %w", writeErr)
+					}
+				}
+
+				page := &pb.Page{
+					Id:            pageID,
+					PageNumber:    pageNum,
+					DriveFileId:   file.ID,
+					Processed:     false,
+					CreatedTime:   time.Now().Unix(),
+					UpdatedTime:   file.UpdatedTime,
+					LocalFilePath: localPath,
+					ImageHash:     hashStr,
+				}
+
+				// Preserve existing metadata if available
+				if proc, exists := processedMap[pageNum]; exists {
+					page.Processed = proc
+				}
+				if ghProj, exists := githubProjectMap[pageNum]; exists {
+					page.GithubProject = ghProj
+				}
+
+				pages = append(pages, page)
+			}
+
+			// 4. Save distinct Notebook metadata to pstore
+			notebook := &pb.Notebook{
+				Id:            notebookID,
+				Title:         notebookTitle,
+				DriveFolderId: folderID,
+				Pages:         pages,
+				LastUpdated:   time.Now().Unix(),
+				Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,
+			}
+
+			saveErr := s.store.SaveNotebook(ctx, notebook)
+			if saveErr != nil {
+				return fmt.Errorf("failed to save synced notebook %s: %w", notebookID, saveErr)
+			}
+			return nil
+		}()
+
 		if err != nil {
-			return fmt.Errorf("failed to download file %s: %w", file.ID, err)
-		}
-
-		// Convert .note bytes to PNG pages
-		pngPages, err := ConvertNoteToPNGs(ctx, notebookTitle, data)
-		if err != nil {
-			return fmt.Errorf("failed to convert .note file %s: %w", file.Name, err)
-		}
-
-		// Retrieve existing notebook to preserve metadata (processed states, linked github projects)
-		existingNotebook, err := s.store.GetNotebook(ctx, notebookID)
-		processedMap := make(map[int32]bool)
-		githubProjectMap := make(map[int32]string)
-		if err == nil && existingNotebook != nil {
-			for _, p := range existingNotebook.Pages {
-				processedMap[p.PageNumber] = p.Processed
-				githubProjectMap[p.PageNumber] = p.GithubProject
+			fmt.Printf("Error processing notebook %s: %v\n", notebookTitle, err)
+			// Mark as UNPROCESSABLE in storage
+			existingNotebook, getErr := s.store.GetNotebook(ctx, notebookID)
+			var notebook *pb.Notebook
+			if getErr == nil && existingNotebook != nil {
+				notebook = existingNotebook
+				notebook.Status = pb.NotebookStatus_NOTEBOOK_UNPROCESSABLE
+				notebook.LastUpdated = time.Now().Unix()
+			} else {
+				notebook = &pb.Notebook{
+					Id:            notebookID,
+					Title:         notebookTitle,
+					DriveFolderId: folderID,
+					Status:        pb.NotebookStatus_NOTEBOOK_UNPROCESSABLE,
+					LastUpdated:   time.Now().Unix(),
+				}
 			}
-		}
-
-		var pages []*pb.Page
-		for pageIdx, pngBytes := range pngPages {
-			pageNum := int32(pageIdx + 1)
-			pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
-			localPath := filepath.Join(s.binaryDir, pageID+".bin")
-
-			// Write PNG page bytes to flat filesystem path
-			err = os.WriteFile(localPath, pngBytes, 0644)
-			if err != nil {
-				return fmt.Errorf("failed to write local page file: %w", err)
+			saveErr := s.store.SaveNotebook(ctx, notebook)
+			if saveErr != nil {
+				fmt.Printf("Failed to save unprocessable notebook status for %s: %v\n", notebookID, saveErr)
 			}
-
-			page := &pb.Page{
-				Id:            pageID,
-				PageNumber:    pageNum,
-				DriveFileId:   file.ID,
-				Processed:     false,
-				CreatedTime:   time.Now().Unix(),
-				UpdatedTime:   file.UpdatedTime,
-				LocalFilePath: localPath,
-			}
-
-			// Preserve existing metadata if available
-			if proc, exists := processedMap[pageNum]; exists {
-				page.Processed = proc
-			}
-			if ghProj, exists := githubProjectMap[pageNum]; exists {
-				page.GithubProject = ghProj
-			}
-
-			pages = append(pages, page)
-		}
-
-		// 4. Save distinct Notebook metadata to pstore
-		notebook := &pb.Notebook{
-			Id:            notebookID,
-			Title:         notebookTitle,
-			DriveFolderId: folderID,
-			Pages:         pages,
-			LastUpdated:   time.Now().Unix(),
-		}
-
-		err = s.store.SaveNotebook(ctx, notebook)
-		if err != nil {
-			return fmt.Errorf("failed to save synced notebook %s: %w", notebookID, err)
 		}
 
 		s.progressMu.Lock()
 		s.progress[username].Current = int32(i + 1)
 		s.progressMu.Unlock()
+	}
+
+	// Soft Archiving: Compare remote file lists from Google Drive against database notebook records.
+	// Mark any notebooks missing from Google Drive as NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE.
+	localNotebooks, getLocalErr := s.store.GetNotebooks(ctx)
+	if getLocalErr == nil {
+		remoteFileIDs := make(map[string]bool)
+		for _, file := range noteFiles {
+			remoteFileIDs[file.ID] = true
+		}
+
+		for _, nb := range localNotebooks {
+			if nb.DriveFolderId == folderID && !remoteFileIDs[nb.Id] {
+				if nb.Status != pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
+					nb.Status = pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE
+					nb.LastUpdated = time.Now().Unix()
+					saveErr := s.store.SaveNotebook(ctx, nb)
+					if saveErr != nil {
+						fmt.Printf("Failed to soft-archive notebook %s: %v\n", nb.Id, saveErr)
+					}
+				}
+			}
+		}
+	} else {
+		fmt.Printf("Failed to get local notebooks for soft archiving: %v\n", getLocalErr)
 	}
 
 	return nil

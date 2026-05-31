@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/brotherlogic/notes/internal/storage"
 	"github.com/brotherlogic/notes/internal/sync"
@@ -13,15 +15,31 @@ import (
 )
 
 type MockGDriveClient struct {
-	Files []*sync.GDriveFile
-	Data  map[string][]byte
+	Files          []*sync.GDriveFile
+	Data           map[string][]byte
+	DownloadErrors map[string]error
+	ListError      error
+	BlockChan      map[string]chan struct{}
 }
 
 func (m *MockGDriveClient) ListFiles(ctx context.Context, folderID string) ([]*sync.GDriveFile, error) {
+	if m.ListError != nil {
+		return nil, m.ListError
+	}
 	return m.Files, nil
 }
 
 func (m *MockGDriveClient) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	if m.BlockChan != nil {
+		if ch, exists := m.BlockChan[fileID]; exists {
+			<-ch
+		}
+	}
+	if m.DownloadErrors != nil {
+		if err := m.DownloadErrors[fileID]; err != nil {
+			return nil, err
+		}
+	}
 	return m.Data[fileID], nil
 }
 
@@ -175,5 +193,284 @@ func TestSyncAllUsers(t *testing.T) {
 	_, err = store.GetNotebook(ctx, "file_abc")
 	if err != nil {
 		t.Errorf("Failed to retrieve notebook: %v", err)
+	}
+}
+
+func TestSyncUserNotes_UserLock(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_sync_lock_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "lock-user"
+
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      username,
+		GdriveNotesFolderId: "folder_lock",
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	blockCh := make(chan struct{})
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_lock",
+				Name:        "Lock.note",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_lock": []byte("pages=1"),
+		},
+		BlockChan: map[string]chan struct{}{
+			"file_lock": blockCh,
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- worker.SyncUserNotes(ctx, username)
+	}()
+
+	// Wait a tiny bit for the goroutine to enter DownloadFile and block
+	time.Sleep(50 * time.Millisecond)
+
+	// Trigger second sync run for the same user, which should fail due to lock
+	err2 := worker.SyncUserNotes(ctx, username)
+	if err2 == nil {
+		t.Error("Expected second concurrent sync to fail, but got nil")
+	} else if !strings.Contains(err2.Error(), "sync already in progress") {
+		t.Errorf("Expected 'sync already in progress' error, got %v", err2)
+	}
+
+	// Unblock the first sync and wait for it to finish
+	close(blockCh)
+	err1 := <-errChan
+	if err1 != nil {
+		t.Errorf("First sync failed unexpectedly: %v", err1)
+	}
+}
+
+func TestSyncUserNotes_ErrorIsolation(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_error_isolation_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "error-user"
+
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      username,
+		GdriveNotesFolderId: "folder_err",
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_valid",
+				Name:        "Valid.note",
+				UpdatedTime: 1600000000,
+			},
+			{
+				ID:          "file_corrupt",
+				Name:        "Corrupt.note",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_valid":   []byte("pages=1"),
+			"file_corrupt": []byte("corrupt data that is not JSON or PNG"),
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+
+	err = worker.SyncUserNotes(ctx, username)
+	if err != nil {
+		t.Fatalf("SyncUserNotes failed completely: %v", err)
+	}
+
+	// Verify Valid.note is ACTIVE
+	nbValid, err := store.GetNotebook(ctx, "file_valid")
+	if err != nil {
+		t.Fatalf("Failed to get Valid notebook: %v", err)
+	}
+	if nbValid.Status != pb.NotebookStatus_NOTEBOOK_ACTIVE {
+		t.Errorf("Expected Valid notebook to be ACTIVE, got %v", nbValid.Status)
+	}
+
+	// Verify Corrupt.note is UNPROCESSABLE
+	nbCorrupt, err := store.GetNotebook(ctx, "file_corrupt")
+	if err != nil {
+		t.Fatalf("Failed to get Corrupt notebook: %v", err)
+	}
+	if nbCorrupt.Status != pb.NotebookStatus_NOTEBOOK_UNPROCESSABLE {
+		t.Errorf("Expected Corrupt notebook to be UNPROCESSABLE, got %v", nbCorrupt.Status)
+	}
+}
+
+func TestSyncUserNotes_ChangeDetection(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_change_detection_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "change-user"
+
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      username,
+		GdriveNotesFolderId: "folder_change",
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_change",
+				Name:        "Change.note",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_change": []byte("pages=1"),
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+
+	// First sync
+	err = worker.SyncUserNotes(ctx, username)
+	if err != nil {
+		t.Fatalf("First sync failed: %v", err)
+	}
+
+	nb, err := store.GetNotebook(ctx, "file_change")
+	if err != nil {
+		t.Fatalf("Failed to get notebook: %v", err)
+	}
+	pagePath := nb.Pages[0].LocalFilePath
+	initialInfo, err := os.Stat(pagePath)
+	if err != nil {
+		t.Fatalf("Failed to stat page file: %v", err)
+	}
+	initialModTime := initialInfo.ModTime()
+
+	// Wait a moment so mod time would change if written
+	time.Sleep(10 * time.Millisecond)
+
+	// Second sync - should skip file write because hash is unchanged
+	err = worker.SyncUserNotes(ctx, username)
+	if err != nil {
+		t.Fatalf("Second sync failed: %v", err)
+	}
+
+	secondInfo, err := os.Stat(pagePath)
+	if err != nil {
+		t.Fatalf("Failed to stat page file on second sync: %v", err)
+	}
+
+	if !secondInfo.ModTime().Equal(initialModTime) {
+		t.Error("Expected file modification time to remain unchanged (file write skipped)")
+	}
+}
+
+func TestSyncUserNotes_SoftArchiving(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_soft_archive_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "archive-user"
+	folderID := "folder_archive"
+
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      username,
+		GdriveNotesFolderId: folderID,
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	// Preset a notebook that will become archived because it is not on GDrive
+	err = store.SaveNotebook(ctx, &pb.Notebook{
+		Id:            "file_archived",
+		Title:         "ArchivedNotebook",
+		DriveFolderId: folderID,
+		Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,
+	})
+	if err != nil {
+		t.Fatalf("Failed to save preset notebook: %v", err)
+	}
+
+	// GDrive lists files, but "file_archived" is missing!
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_present",
+				Name:        "Present.note",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_present": []byte("pages=1"),
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+
+	err = worker.SyncUserNotes(ctx, username)
+	if err != nil {
+		t.Fatalf("SyncUserNotes failed: %v", err)
+	}
+
+	// Verify file_archived is marked DELETED_ON_REMOTE
+	nbArchived, err := store.GetNotebook(ctx, "file_archived")
+	if err != nil {
+		t.Fatalf("Failed to get archived notebook: %v", err)
+	}
+	if nbArchived.Status != pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
+		t.Errorf("Expected notebook status to be DELETED_ON_REMOTE, got %v", nbArchived.Status)
+	}
+
+	// Verify file_present is marked ACTIVE
+	nbPresent, err := store.GetNotebook(ctx, "file_present")
+	if err != nil {
+		t.Fatalf("Failed to get present notebook: %v", err)
+	}
+	if nbPresent.Status != pb.NotebookStatus_NOTEBOOK_ACTIVE {
+		t.Errorf("Expected present notebook to be ACTIVE, got %v", nbPresent.Status)
 	}
 }
