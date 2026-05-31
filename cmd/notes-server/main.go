@@ -179,6 +179,7 @@ func main() {
 	// Config and Toggle API endpoints
 	mux.HandleFunc("/api/user/config", server.HandleGetUserConfig)
 	mux.HandleFunc("/api/notebooks", server.HandleGetNotebooks)
+	mux.HandleFunc("/api/notebooks/resync", server.HandleResyncNotebook)
 	mux.HandleFunc("/api/configure-folder", server.HandleConfigureFolder)
 	mux.HandleFunc("/api/config/folder", server.HandleConfigureFolder)
 	mux.HandleFunc("/api/sync/status", server.HandleGetSyncStatus)

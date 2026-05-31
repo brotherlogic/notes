@@ -29,6 +29,7 @@ type GitHubClient interface {
 type SyncProgressProvider interface {
 	GetSyncProgress(username string) *sync.SyncProgress
 	SyncUserNotes(ctx context.Context, username string) error
+	SyncNotebook(ctx context.Context, username string, notebookID string) error
 }
 
 type Server struct {
@@ -1101,4 +1102,40 @@ func (s *Server) HandleGetNotebooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write([]byte("[" + strings.Join(serialized, ",") + "]"))
+}
+
+// HandleResyncNotebook triggers an on-demand resynchronization for a specific notebook.
+func (s *Server) HandleResyncNotebook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := cookie.Value
+	notebookID := r.URL.Query().Get("id")
+	if notebookID == "" {
+		http.Error(w, "missing notebook ID", http.StatusBadRequest)
+		return
+	}
+
+	if s.syncProvider == nil {
+		http.Error(w, "sync provider not configured", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	err = s.syncProvider.SyncNotebook(ctx, username, notebookID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "success"})
 }

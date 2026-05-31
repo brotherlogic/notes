@@ -170,7 +170,15 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 			for pageIdx, pngBytes := range pngPages {
 				pageNum := int32(pageIdx + 1)
 				pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
-				localPath := filepath.Join(s.binaryDir, pageID+".bin")
+				safePageID := filepath.Base(pageID)
+				localPath := filepath.Join(s.binaryDir, safePageID+".bin")
+
+				// Extra safety check to prevent path traversal
+				cleanLocalPath := filepath.Clean(localPath)
+				cleanBinaryDir := filepath.Clean(s.binaryDir)
+				if !strings.HasPrefix(cleanLocalPath, cleanBinaryDir) {
+					return fmt.Errorf("invalid path traversal detected")
+				}
 
 				// Change Detection: Compute the SHA-256 hash of each page's generated PNG bytes.
 				h := sha256.New()
@@ -278,6 +286,168 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 		}
 	} else {
 		fmt.Printf("Failed to get local notebooks for soft archiving: %v\n", getLocalErr)
+	}
+
+	return nil
+}
+
+// SyncNotebook syncs a single specific notebook for the user.
+func (s *Worker) SyncNotebook(ctx context.Context, username string, notebookID string) error {
+	// Sanitize and validate notebookID to prevent path traversal vulnerabilities
+	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, notebookID); !matched {
+		return fmt.Errorf("invalid notebook ID format")
+	}
+
+	// 1. Concurrency Check: verify if a full user sync or a notebook sync is active
+	if _, loaded := s.activeSync.Load(username); loaded {
+		return fmt.Errorf("a full synchronization is already in progress for this user")
+	}
+
+	notebookKey := "nb:" + notebookID
+	if _, loaded := s.activeSync.LoadOrStore(notebookKey, true); loaded {
+		return fmt.Errorf("sync already in progress for this notebook")
+	}
+	defer s.activeSync.Delete(notebookKey)
+
+	// 2. Retrieve UserConfig
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		return fmt.Errorf("failed to get user config: %w", err)
+	}
+
+	folderID := config.GdriveNotesFolderId
+	if folderID == "" {
+		return fmt.Errorf("no Google Drive notes folder configured for user %s", username)
+	}
+
+	// Retrieve existing notebook to verify ownership
+	existingNotebook, err := s.store.GetNotebook(ctx, notebookID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve notebook metadata: %w", err)
+	}
+	if existingNotebook.DriveFolderId != folderID {
+		return fmt.Errorf("notebook does not belong to the configured Google Drive folder")
+	}
+
+	// 3. List and locate the remote file
+	files, err := s.gdrive.ListFiles(ctx, folderID)
+	if err != nil {
+		return fmt.Errorf("failed to list drive files: %w", err)
+	}
+
+	var targetFile *GDriveFile
+	for _, file := range files {
+		if file.ID == notebookID {
+			targetFile = file
+			break
+		}
+	}
+
+	// If file is missing on remote, mark as DELETED_ON_REMOTE
+	if targetFile == nil {
+		existingNotebook.Status = pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE
+		existingNotebook.LastUpdated = time.Now().Unix()
+		if saveErr := s.store.SaveNotebook(ctx, existingNotebook); saveErr != nil {
+			return fmt.Errorf("notebook not found in Google Drive; failed to soft-archive: %w", saveErr)
+		}
+		return fmt.Errorf("notebook folder/file not found in Google Drive")
+	}
+
+	if !strings.HasSuffix(strings.ToLower(targetFile.Name), ".note") {
+		return fmt.Errorf("selected file is not a valid .note file")
+	}
+
+	notebookTitle := strings.TrimSuffix(targetFile.Name, ".note")
+
+	// Ensure storage path exists
+	if err := os.MkdirAll(s.binaryDir, 0755); err != nil {
+		return fmt.Errorf("failed to create binary storage directory: %w", err)
+	}
+
+	// 4. Download and Convert
+	data, err := s.gdrive.DownloadFile(ctx, targetFile.ID)
+	if err != nil {
+		return fmt.Errorf("failed to download file from Google Drive: %w", err)
+	}
+
+	pngPages, err := ConvertNoteToPNGs(ctx, notebookTitle, data)
+	if err != nil {
+		existingNotebook.Status = pb.NotebookStatus_NOTEBOOK_UNPROCESSABLE
+		existingNotebook.LastUpdated = time.Now().Unix()
+		_ = s.store.SaveNotebook(ctx, existingNotebook)
+		return fmt.Errorf("failed to convert .note file: %w", err)
+	}
+
+	// Map existing page metadata
+	processedMap := make(map[int32]bool)
+	githubProjectMap := make(map[int32]string)
+	imageHashMap := make(map[int32]string)
+	for _, p := range existingNotebook.Pages {
+		processedMap[p.PageNumber] = p.Processed
+		githubProjectMap[p.PageNumber] = p.GithubProject
+		imageHashMap[p.PageNumber] = p.ImageHash
+	}
+
+	var pages []*pb.Page
+	for idx, pngBytes := range pngPages {
+		pageNum := int32(idx + 1)
+		pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
+		safePageID := filepath.Base(pageID)
+		localPath := filepath.Join(s.binaryDir, safePageID+".bin")
+
+		// Extra safety check to prevent path traversal
+		cleanLocalPath := filepath.Clean(localPath)
+		cleanBinaryDir := filepath.Clean(s.binaryDir)
+		if !strings.HasPrefix(cleanLocalPath, cleanBinaryDir) {
+			return fmt.Errorf("invalid path traversal detected")
+		}
+
+		// Change detection hash
+		h := sha256.New()
+		h.Write(pngBytes)
+		hashStr := hex.EncodeToString(h.Sum(nil))
+
+		existingHash := imageHashMap[pageNum]
+		_, statErr := os.Stat(localPath)
+		if hashStr != existingHash || os.IsNotExist(statErr) {
+			if err := os.WriteFile(localPath, pngBytes, 0644); err != nil {
+				return fmt.Errorf("failed to write local page file: %w", err)
+			}
+		}
+
+		page := &pb.Page{
+			Id:            pageID,
+			PageNumber:    pageNum,
+			DriveFileId:   targetFile.ID,
+			Processed:     false,
+			CreatedTime:   time.Now().Unix(),
+			UpdatedTime:   targetFile.UpdatedTime,
+			LocalFilePath: localPath,
+			ImageHash:     hashStr,
+		}
+
+		if proc, exists := processedMap[pageNum]; exists {
+			page.Processed = proc
+		}
+		if ghProj, exists := githubProjectMap[pageNum]; exists {
+			page.GithubProject = ghProj
+		}
+
+		pages = append(pages, page)
+	}
+
+	// 5. Save updated notebook
+	updatedNotebook := &pb.Notebook{
+		Id:            notebookID,
+		Title:         notebookTitle,
+		DriveFolderId: folderID,
+		Pages:         pages,
+		LastUpdated:   time.Now().Unix(),
+		Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,
+	}
+
+	if err := s.store.SaveNotebook(ctx, updatedNotebook); err != nil {
+		return fmt.Errorf("failed to save synced notebook: %w", err)
 	}
 
 	return nil

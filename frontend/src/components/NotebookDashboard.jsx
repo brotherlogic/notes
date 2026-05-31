@@ -10,6 +10,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalLoading, setIsModalLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ active: false, current: 0, total: 0, error: '' });
+  const [syncingNotebooks, setSyncingNotebooks] = useState({});
 
   const [folderDetails, setFolderDetails] = useState(null);
   const [selectedFolderPreview, setSelectedFolderPreview] = useState(null);
@@ -190,6 +191,39 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
         alert("Could not load folders. Ensure Google Drive is linked and active.");
         setIsModalLoading(false);
         setIsFolderModalOpen(false);
+      });
+  };
+
+  const handleResyncNotebook = (e, nbId) => {
+    e.stopPropagation();
+
+    setSyncingNotebooks(prev => ({
+      ...prev,
+      [nbId]: { loading: true, error: null }
+    }));
+
+    fetch(`/api/notebooks/resync?id=${nbId}`, { method: 'POST' })
+      .then(async res => {
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "Failed to resync notebook");
+        }
+        return fetch('/api/notebooks');
+      })
+      .then(res => res.json())
+      .then(nbs => {
+        setNotebooks(nbs || []);
+        setSyncingNotebooks(prev => ({
+          ...prev,
+          [nbId]: { loading: false, error: null }
+        }));
+      })
+      .catch(err => {
+        console.error("Resync error:", err);
+        setSyncingNotebooks(prev => ({
+          ...prev,
+          [nbId]: { loading: false, error: err.message || "Sync failed" }
+        }));
       });
   };
 
@@ -525,12 +559,12 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
               return (
                 <div
                   key={nb.id}
-                  onClick={() => onSelectNotebook(nb)}
+                  onClick={() => !syncingNotebooks[nb.id]?.loading && onSelectNotebook(nb)}
                   className="glass-container"
                   style={{
                     padding: '24px',
                     borderRadius: '16px',
-                    cursor: 'pointer',
+                    cursor: syncingNotebooks[nb.id]?.loading ? 'not-allowed' : 'pointer',
                     borderColor: isUnprocessable 
                       ? 'rgba(239, 68, 68, 0.4)' 
                       : (isActive ? 'var(--accent)' : 'var(--border-frosted)'),
@@ -538,7 +572,10 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                       ? (isUnprocessable ? '0 12px 40px 0 rgba(239, 68, 68, 0.2)' : '0 12px 40px 0 var(--accent-glow)') 
                       : 'var(--shadow-frosted)',
                     opacity: isArchived ? 0.6 : 1,
-                    transition: 'var(--transition-smooth), opacity 0.3s ease'
+                    transition: 'var(--transition-smooth), opacity 0.3s ease',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: '180px'
                   }}
                 >
                   {isArchived && (
@@ -583,11 +620,85 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                   )}
                   <h3 style={{ fontSize: '1.25rem', marginBottom: '8px', fontWeight: 600 }}>{nb.title || 'Untitled Notebook'}</h3>
                   <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                    📦 {nb.pages?.length || 0} Synced Pages
+                    {syncingNotebooks[nb.id]?.loading ? (
+                      <span style={{ color: 'var(--accent)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        <span className="spin" style={{ display: 'inline-block' }}>🔄</span>
+                        Syncing notebook...
+                      </span>
+                    ) : (
+                      `📦 ${nb.pages?.length || 0} Synced Pages`
+                    )}
                   </p>
-                  <span style={{ fontSize: '0.875rem', color: isUnprocessable ? '#fca5a5' : 'var(--accent)', fontWeight: 500 }}>
-                    Open Notebook →
-                  </span>
+                  
+                  {syncingNotebooks[nb.id]?.error && (
+                    <div 
+                      style={{ 
+                        fontSize: '0.75rem', 
+                        color: 'var(--danger)', 
+                        marginTop: '8px', 
+                        marginBottom: '12px',
+                        padding: '6px 10px',
+                        backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                        borderRadius: '6px'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      ⚠️ {syncingNotebooks[nb.id].error}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
+                    <span style={{ fontSize: '0.875rem', color: isUnprocessable ? '#fca5a5' : 'var(--accent)', fontWeight: 500 }}>
+                      Open Notebook →
+                    </span>
+                    {!isArchived && (
+                      <button
+                        onClick={(e) => handleResyncNotebook(e, nb.id)}
+                        disabled={syncingNotebooks[nb.id]?.loading}
+                        className="btn"
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.75rem',
+                          backgroundColor: syncingNotebooks[nb.id]?.loading ? 'rgba(56, 189, 248, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+                          color: syncingNotebooks[nb.id]?.loading ? 'var(--accent)' : 'var(--text-secondary)',
+                          border: '1px solid var(--border-frosted)',
+                          cursor: syncingNotebooks[nb.id]?.loading ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'var(--transition-smooth)'
+                        }}
+                        onMouseOver={(e) => {
+                          if (!syncingNotebooks[nb.id]?.loading) {
+                            e.currentTarget.style.backgroundColor = 'rgba(56, 189, 248, 0.1)';
+                            e.currentTarget.style.color = 'var(--text-primary)';
+                            e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+                          }
+                        }}
+                        onMouseOut={(e) => {
+                          if (!syncingNotebooks[nb.id]?.loading) {
+                            e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
+                            e.currentTarget.style.color = 'var(--text-secondary)';
+                            e.currentTarget.style.borderColor = 'var(--border-frosted)';
+                          }
+                        }}
+                      >
+                        {syncingNotebooks[nb.id]?.loading ? (
+                          <>
+                            <span className="spin" style={{ display: 'inline-block' }}>🔄</span>
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <span>🔄</span>
+                            Resync
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}

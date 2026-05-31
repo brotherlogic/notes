@@ -447,6 +447,13 @@ func (m *mockSyncProgressProvider) SyncUserNotes(ctx context.Context, username s
 	return nil
 }
 
+func (m *mockSyncProgressProvider) SyncNotebook(ctx context.Context, username string, notebookID string) error {
+	if notebookID == "fail-id" {
+		return fmt.Errorf("sync failed: mock error")
+	}
+	return nil
+}
+
 func TestHandleGetSyncStatus(t *testing.T) {
 	testClient := pstore_client.GetTestClient()
 	store := storage.NewStorage(testClient)
@@ -595,5 +602,64 @@ func TestHandleGetFolderDetails(t *testing.T) {
 
 	if details.FolderID != "folder_123" || details.FolderName != "Awesome Notes Folder" || details.FileCount != 3 {
 		t.Errorf("Unexpected folder details returned: %+v", details)
+	}
+}
+
+func TestHandleResyncNotebook(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	username := "test-user"
+	mockProvider := &mockSyncProgressProvider{}
+	server.SetSyncProvider(mockProvider)
+
+	// 1. Success case
+	req := httptest.NewRequest("POST", "/api/notebooks/resync?id=valid-id", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+	server.HandleResyncNotebook(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	// 2. Missing notebook ID
+	req = httptest.NewRequest("POST", "/api/notebooks/resync", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w = httptest.NewRecorder()
+	server.HandleResyncNotebook(w, req)
+	resp = w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status 400 Bad Request, got %v", resp.StatusCode)
+	}
+
+	// 3. Failed sync case
+	req = httptest.NewRequest("POST", "/api/notebooks/resync?id=fail-id", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w = httptest.NewRecorder()
+	server.HandleResyncNotebook(w, req)
+	resp = w.Result()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("Expected status 500 Internal Server Error, got %v", resp.StatusCode)
+	}
+
+	// 4. Method not allowed
+	req = httptest.NewRequest("GET", "/api/notebooks/resync?id=valid-id", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w = httptest.NewRecorder()
+	server.HandleResyncNotebook(w, req)
+	resp = w.Result()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405 Method Not Allowed, got %v", resp.StatusCode)
+	}
+
+	// 5. Unauthorized
+	req = httptest.NewRequest("POST", "/api/notebooks/resync?id=valid-id", nil)
+	w = httptest.NewRecorder()
+	server.HandleResyncNotebook(w, req)
+	resp = w.Result()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 Unauthorized, got %v", resp.StatusCode)
 	}
 }

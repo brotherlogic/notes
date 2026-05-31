@@ -506,3 +506,109 @@ func TestSyncUserNotes_SoftArchiving(t *testing.T) {
 		t.Errorf("Expected present notebook to be ACTIVE, got %v", nbPresent.Status)
 	}
 }
+
+func TestSyncNotebook(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_sync_notebook_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "test-user"
+
+	// Preset UserConfig and Notebook
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      username,
+		GdriveNotesFolderId: "folder_123",
+		GdriveOauthToken:    "mock_oauth_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	err = store.SaveNotebook(ctx, &pb.Notebook{
+		Id:            "file_note_1",
+		Title:         "Lectures",
+		DriveFolderId: "folder_123",
+		Status:        pb.NotebookStatus_NOTEBOOK_UNPROCESSABLE,
+		Pages: []*pb.Page{
+			{
+				Id:         "file_note_1-page-1",
+				PageNumber: 1,
+				Processed:  true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset notebook: %v", err)
+	}
+
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_note_1",
+				Name:        "Lectures.note",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_note_1": []byte("pages=2"),
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+
+	// 1. Success case: manual resync of "file_note_1"
+	err = worker.SyncNotebook(ctx, username, "file_note_1")
+	if err != nil {
+		t.Fatalf("SyncNotebook failed: %v", err)
+	}
+
+	notebook, err := store.GetNotebook(ctx, "file_note_1")
+	if err != nil {
+		t.Fatalf("Failed to retrieve notebook: %v", err)
+	}
+
+	if notebook.Status != pb.NotebookStatus_NOTEBOOK_ACTIVE {
+		t.Errorf("Expected status to be ACTIVE, got %v", notebook.Status)
+	}
+
+	if len(notebook.Pages) != 2 {
+		t.Fatalf("Expected 2 pages, got %d", len(notebook.Pages))
+	}
+
+	// Verify existing metadata page 1 was preserved (Processed should remain true)
+	if !notebook.Pages[0].Processed {
+		t.Errorf("Expected page 1 Processed status to be preserved as true")
+	}
+
+	// 2. Remote deleted notebook case
+	// Preset another notebook
+	err = store.SaveNotebook(ctx, &pb.Notebook{
+		Id:            "deleted_on_gdrive",
+		Title:         "Old Notebook",
+		DriveFolderId: "folder_123",
+		Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,
+	})
+	if err != nil {
+		t.Fatalf("Failed to save notebook: %v", err)
+	}
+
+	err = worker.SyncNotebook(ctx, username, "deleted_on_gdrive")
+	if err == nil {
+		t.Errorf("Expected SyncNotebook to fail for remote deleted notebook")
+	}
+
+	nbDeleted, err := store.GetNotebook(ctx, "deleted_on_gdrive")
+	if err != nil {
+		t.Fatalf("Failed to retrieve notebook: %v", err)
+	}
+
+	if nbDeleted.Status != pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
+		t.Errorf("Expected status to be DELETED_ON_REMOTE, got %v", nbDeleted.Status)
+	}
+}
