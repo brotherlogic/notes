@@ -399,6 +399,38 @@ func TestSyncUserNotes_ChangeDetection(t *testing.T) {
 	if !secondInfo.ModTime().Equal(initialModTime) {
 		t.Error("Expected file modification time to remain unchanged (file write skipped)")
 	}
+
+	// Wait a moment so mod time would change when written
+	time.Sleep(10 * time.Millisecond)
+
+	// Third sync - update the file's name to trigger content changes (different title inside mock PNG)
+	mockGDrive.Files[0].Name = "ChangeModified.note"
+	mockGDrive.Files[0].UpdatedTime = 1600000001
+	err = worker.SyncUserNotes(ctx, username)
+	if err != nil {
+		t.Fatalf("Third sync failed: %v", err)
+	}
+
+	thirdInfo, err := os.Stat(pagePath)
+	if err != nil {
+		t.Fatalf("Failed to stat page file on third sync: %v", err)
+	}
+
+	if thirdInfo.ModTime().Equal(secondInfo.ModTime()) {
+		t.Error("Expected file modification time to change on third sync (file write occurred)")
+	}
+
+	// Verify that the updated notebook status and new page hash is successfully updated in storage
+	updatedNB, err := store.GetNotebook(ctx, "file_change")
+	if err != nil {
+		t.Fatalf("Failed to get updated notebook: %v", err)
+	}
+	if updatedNB.Title != "ChangeModified" {
+		t.Errorf("Expected notebook title 'ChangeModified', got %q", updatedNB.Title)
+	}
+	if updatedNB.Pages[0].ImageHash == nb.Pages[0].ImageHash {
+		t.Error("Expected page ImageHash to be updated/different, but it remained the same")
+	}
 }
 
 func TestSyncUserNotes_SoftArchiving(t *testing.T) {
