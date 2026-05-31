@@ -170,7 +170,15 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 			for pageIdx, pngBytes := range pngPages {
 				pageNum := int32(pageIdx + 1)
 				pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
-				localPath := filepath.Join(s.binaryDir, pageID+".bin")
+				safePageID := filepath.Base(pageID)
+				localPath := filepath.Join(s.binaryDir, safePageID+".bin")
+
+				// Extra safety check to prevent path traversal
+				cleanLocalPath := filepath.Clean(localPath)
+				cleanBinaryDir := filepath.Clean(s.binaryDir)
+				if !strings.HasPrefix(cleanLocalPath, cleanBinaryDir) {
+					return fmt.Errorf("invalid path traversal detected")
+				}
 
 				// Change Detection: Compute the SHA-256 hash of each page's generated PNG bytes.
 				h := sha256.New()
@@ -285,6 +293,11 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 
 // SyncNotebook syncs a single specific notebook for the user.
 func (s *Worker) SyncNotebook(ctx context.Context, username string, notebookID string) error {
+	// Sanitize and validate notebookID to prevent path traversal vulnerabilities
+	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, notebookID); !matched {
+		return fmt.Errorf("invalid notebook ID format")
+	}
+
 	// 1. Concurrency Check: verify if a full user sync or a notebook sync is active
 	if _, loaded := s.activeSync.Load(username); loaded {
 		return fmt.Errorf("a full synchronization is already in progress for this user")
@@ -379,7 +392,15 @@ func (s *Worker) SyncNotebook(ctx context.Context, username string, notebookID s
 	for idx, pngBytes := range pngPages {
 		pageNum := int32(idx + 1)
 		pageID := fmt.Sprintf("%s-page-%d", notebookID, pageNum)
-		localPath := filepath.Join(s.binaryDir, pageID+".bin")
+		safePageID := filepath.Base(pageID)
+		localPath := filepath.Join(s.binaryDir, safePageID+".bin")
+
+		// Extra safety check to prevent path traversal
+		cleanLocalPath := filepath.Clean(localPath)
+		cleanBinaryDir := filepath.Clean(s.binaryDir)
+		if !strings.HasPrefix(cleanLocalPath, cleanBinaryDir) {
+			return fmt.Errorf("invalid path traversal detected")
+		}
 
 		// Change detection hash
 		h := sha256.New()
