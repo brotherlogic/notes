@@ -5,6 +5,9 @@ export default function PageViewer({ notebook, onClose }) {
   const [showProcessed, setShowProcessed] = useState(false);
   const [animate, setAnimate] = useState(false);
 
+  const isArchived = notebook.status === 'NOTEBOOK_DELETED_ON_REMOTE';
+  const isUnprocessable = notebook.status === 'NOTEBOOK_UNPROCESSABLE';
+
   // Crop State
   const [isDrawing, setIsDrawing] = useState(false);
   const [startCoords, setStartCoords] = useState({ x: 0, y: 0 });
@@ -55,7 +58,7 @@ export default function PageViewer({ notebook, onClose }) {
   };
 
   const handleMarkProcessed = () => {
-    if (!currentPage) return;
+    if (!currentPage || isArchived) return;
     fetch(`/api/pages/${currentPage.id}/processed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -76,7 +79,7 @@ export default function PageViewer({ notebook, onClose }) {
 
   // Click & Drag Crop Drawing Handlers
   const handleMouseDown = (e) => {
-    if (!containerRef.current || currentPage?.processed) return;
+    if (!containerRef.current || currentPage?.processed || isArchived) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -87,7 +90,7 @@ export default function PageViewer({ notebook, onClose }) {
   };
 
   const handleMouseMove = (e) => {
-    if (!isDrawing || !containerRef.current || !cropBox) return;
+    if (!isDrawing || !containerRef.current || !cropBox || isArchived) return;
     const rect = containerRef.current.getBoundingClientRect();
     const currentX = e.clientX - rect.left;
     const currentY = e.clientY - rect.top;
@@ -101,7 +104,7 @@ export default function PageViewer({ notebook, onClose }) {
   };
 
   const handleMouseUp = () => {
-    if (!isDrawing) return;
+    if (!isDrawing || isArchived) return;
     setIsDrawing(false);
     if (cropBox && cropBox.w > 10 && cropBox.h > 10) {
       // Show form modal to file issue
@@ -113,7 +116,7 @@ export default function PageViewer({ notebook, onClose }) {
 
   const handleSubmitIssue = (e) => {
     e.preventDefault();
-    if (!imgRef.current || !cropBox) return;
+    if (!imgRef.current || !cropBox || isArchived) return;
 
     setIsSubmitting(true);
 
@@ -181,6 +184,55 @@ export default function PageViewer({ notebook, onClose }) {
         </div>
       </div>
 
+      {/* Status Banners */}
+      {isArchived && (
+        <div 
+          className="glass-container" 
+          style={{ 
+            padding: '16px 20px', 
+            marginBottom: '24px', 
+            borderRadius: '16px',
+            border: '1px solid rgba(148, 163, 184, 0.3)',
+            background: 'linear-gradient(135deg, rgba(17, 21, 28, 0.85), rgba(148, 163, 184, 0.05))',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px'
+          }}
+        >
+          <span style={{ fontSize: '1.75rem' }}>📁</span>
+          <div>
+            <h4 style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '1.05rem', marginBottom: '2px' }}>Archived Notebook</h4>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>
+              This notebook has been deleted from Google Drive and is read-only.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isUnprocessable && (
+        <div 
+          className="glass-container" 
+          style={{ 
+            padding: '16px 20px', 
+            marginBottom: '24px', 
+            borderRadius: '16px',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            background: 'linear-gradient(135deg, rgba(17, 21, 28, 0.85), rgba(239, 68, 68, 0.05))',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px'
+          }}
+        >
+          <span style={{ fontSize: '1.75rem' }}>⚠️</span>
+          <div>
+            <h4 style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '1.05rem', marginBottom: '2px' }}>Corrupted or Unprocessable</h4>
+            <p style={{ fontSize: '0.9rem', color: '#fca5a5', margin: 0 }}>
+              This notebook could not be processed. Please check if the file is corrupted.
+            </p>
+          </div>
+        </div>
+      )}
+
       {filteredPages.length === 0 ? (
         <div className="glass-container" style={{ padding: '60px', textAlign: 'center', color: 'var(--text-secondary)', borderRadius: '16px' }}>
           No active pages in this notebook. Mark pages as active or enable "Show Processed Pages".
@@ -218,12 +270,15 @@ export default function PageViewer({ notebook, onClose }) {
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button
                   onClick={handleMarkProcessed}
+                  disabled={isArchived}
                   className="btn btn-secondary"
                   style={{
                     padding: '6px 12px',
                     fontSize: '0.875rem',
                     borderColor: currentPage.processed ? 'var(--success)' : 'var(--border-frosted)',
-                    color: currentPage.processed ? 'var(--success)' : 'var(--text-primary)'
+                    color: currentPage.processed ? 'var(--success)' : 'var(--text-primary)',
+                    opacity: isArchived ? 0.5 : 1,
+                    cursor: isArchived ? 'not-allowed' : 'pointer'
                   }}
                 >
                   {currentPage.processed ? '✓ Processed' : 'Mark Processed'}
@@ -247,7 +302,7 @@ export default function PageViewer({ notebook, onClose }) {
                 display: 'flex',
                 justifyContent: 'center',
                 border: '1px solid var(--border-frosted)',
-                cursor: currentPage.processed ? 'not-allowed' : 'crosshair',
+                cursor: (currentPage.processed || isArchived) ? 'not-allowed' : 'crosshair',
                 userSelect: 'none'
               }}
             >
@@ -280,7 +335,7 @@ export default function PageViewer({ notebook, onClose }) {
                 }} />
               )}
               
-              {!currentPage.processed && (
+              {!currentPage.processed && !isArchived && (
                 <div style={{
                   position: 'absolute',
                   top: '12px',
@@ -292,6 +347,21 @@ export default function PageViewer({ notebook, onClose }) {
                   color: 'var(--text-secondary)'
                 }}>
                   🖱️ Click & Drag to Crop
+                </div>
+              )}
+
+              {isArchived && (
+                <div style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  background: 'rgba(0,0,0,0.6)',
+                  padding: '4px 8px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: 'var(--danger)'
+                }}>
+                  🔒 Read-Only
                 </div>
               )}
             </div>
