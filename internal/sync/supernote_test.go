@@ -6,6 +6,8 @@ import (
 	"errors"
 	"image"
 	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/brotherlogic/notes/internal/sync"
@@ -197,5 +199,34 @@ func TestGenerateMockPage(t *testing.T) {
 	bounds := img.Bounds()
 	if bounds.Dx() != 800 || bounds.Dy() != 1000 {
 		t.Errorf("Expected 800x1000 page, got %dx%d", bounds.Dx(), bounds.Dy())
+	}
+}
+
+func TestConvertRealNote(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join("..", "..", "test_note", "ai cluster.note")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read real test note: %v", err)
+	}
+
+	pngs, err := sync.ConvertNoteToPNGs(ctx, "ai cluster.note", data)
+	if err != nil {
+		t.Fatalf("failed to convert real test note: %v", err)
+	}
+
+	t.Logf("Successfully converted real test note. Found %d pages.", len(pngs))
+	if len(pngs) == 0 {
+		t.Error("expected at least one page, got 0")
+	}
+
+	for i, imgBytes := range pngs {
+		img, err := png.Decode(bytes.NewReader(imgBytes))
+		if err != nil {
+			t.Errorf("page %d: failed to decode extracted PNG: %v", i+1, err)
+			continue
+		}
+		bounds := img.Bounds()
+		t.Logf("Page %d size: %dx%d", i+1, bounds.Dx(), bounds.Dy())
 	}
 }

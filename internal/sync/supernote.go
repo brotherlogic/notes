@@ -205,12 +205,20 @@ func ConvertNoteToPNGs(ctx context.Context, name string, data []byte) ([][]byte,
 		return pngs, nil
 	}
 
-	// 2. If it is a mock/test JSON or has metadata, let's see if we can parse the page count.
+	// 2. If it is a mock/test JSON, has metadata, or is a raw Supernote file, let's see if we can parse the page count.
 	isMock := bytes.HasPrefix(data, []byte("{")) || bytes.Contains(data, []byte("pages:")) || bytes.Contains(data, []byte("pages="))
-	if isMock {
+	isSupernote := bytes.Contains(data, []byte("noteSN_FILE_VER")) || bytes.Contains(data, []byte("<FILE_TYPE:NOTE>"))
+	if isMock || isSupernote {
 		pageCount := 1
 		str := string(data)
-		if idx := strings.Index(str, `"pages":`); idx != -1 {
+		if idx := strings.Index(str, "<FINALOPERATION_PAGE:"); idx != -1 {
+			sub := str[idx+21:]
+			if endIdx := strings.Index(sub, ">"); endIdx != -1 {
+				if val, err := strconv.Atoi(strings.TrimSpace(sub[:endIdx])); err == nil {
+					pageCount = val
+				}
+			}
+		} else if idx := strings.Index(str, `"pages":`); idx != -1 {
 			sub := str[idx+8:]
 			if endIdx := strings.IndexAny(sub, ",}"); endIdx != -1 {
 				if val, err := strconv.Atoi(strings.TrimSpace(sub[:endIdx])); err == nil {
