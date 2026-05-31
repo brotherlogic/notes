@@ -130,3 +130,76 @@ func TestHandleCreateGitHubIssue(t *testing.T) {
 		t.Errorf("Expected non-empty cropped image data")
 	}
 }
+
+func TestHandleCreateGitHubIssue_Archived(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	// Set up temporary local binary storage folder
+	tempDir, err := os.MkdirTemp("", "issues_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "test-github-user"
+	pageID := "folder_123-page-file_abc"
+	localPath := filepath.Join(tempDir, pageID+".bin")
+
+	// 1. Write a valid PNG image file to local storage path
+	err = writeValidPNG(localPath)
+	if err != nil {
+		t.Fatalf("Failed to write mock PNG page file: %v", err)
+	}
+
+	// 2. Preset Notebook & Page metadata in pstore with Status = pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE
+	err = store.SaveNotebook(ctx, &pb.Notebook{
+		Id:            "folder_123",
+		Status:        pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE,
+		GithubProject: "brotherlogic/notes",
+		Pages: []*pb.Page{
+			{
+				Id:            pageID,
+				LocalFilePath: localPath,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset notebook: %v", err)
+	}
+
+	// Preset user session config
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:   username,
+		GithubOauthToken: "gho_mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	mockGH := &MockGitHubClient{}
+	server := api.NewServer(store)
+	server.SetBinaryDir(tempDir)
+	server.SetGitHubClient(mockGH)
+
+	// 3. Post payload with coordinates and details
+	payload := `{"page_id": "folder_123-page-file_abc", "x": 10, "y": 20, "width": 50, "height": 40, "title": " Handwritten Bug", "body": "Found a hand-written bug here!"}`
+	req := httptest.NewRequest("POST", "/api/issues/create", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	// 4. Call handler
+	server.HandleCreateIssue(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("Expected status 403 Forbidden, got %v", resp.StatusCode)
+	}
+
+	// 5. Assert MockGitHubClient was not invoked
+	if mockGH.Repo != "" {
+		t.Errorf("Expected mock GitHub client to not be invoked, but Repo was set to %q", mockGH.Repo)
+	}
+}
