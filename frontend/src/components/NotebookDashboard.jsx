@@ -520,6 +520,8 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '24px' }}>
             {notebooks.map(nb => {
               const isActive = activeNotebookId === nb.id;
+              const isArchived = nb.status === 'NOTEBOOK_DELETED_ON_REMOTE';
+              const isUnprocessable = nb.status === 'NOTEBOOK_UNPROCESSABLE';
               return (
                 <div
                   key={nb.id}
@@ -529,16 +531,61 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                     padding: '24px',
                     borderRadius: '16px',
                     cursor: 'pointer',
-                    borderColor: isActive ? 'var(--accent)' : 'var(--border-frosted)',
-                    boxShadow: isActive ? '0 12px 40px 0 var(--accent-glow)' : 'var(--shadow-frosted)',
-                    transition: 'var(--transition-smooth)'
+                    borderColor: isUnprocessable 
+                      ? 'rgba(239, 68, 68, 0.4)' 
+                      : (isActive ? 'var(--accent)' : 'var(--border-frosted)'),
+                    boxShadow: isActive 
+                      ? (isUnprocessable ? '0 12px 40px 0 rgba(239, 68, 68, 0.2)' : '0 12px 40px 0 var(--accent-glow)') 
+                      : 'var(--shadow-frosted)',
+                    opacity: isArchived ? 0.6 : 1,
+                    transition: 'var(--transition-smooth), opacity 0.3s ease'
                   }}
                 >
+                  {isArchived && (
+                    <div style={{ marginBottom: '10px' }}>
+                      <span 
+                        style={{ 
+                          fontSize: '0.75rem', 
+                          padding: '4px 8px', 
+                          borderRadius: '9999px', 
+                          background: 'rgba(156, 163, 175, 0.15)', 
+                          color: 'var(--text-secondary)', 
+                          fontWeight: 600,
+                          border: '1px solid rgba(156, 163, 175, 0.2)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        📁 Archived (Remote Deleted)
+                      </span>
+                    </div>
+                  )}
+                  {isUnprocessable && (
+                    <div style={{ marginBottom: '10px' }}>
+                      <span 
+                        style={{ 
+                          fontSize: '0.75rem', 
+                          padding: '4px 8px', 
+                          borderRadius: '9999px', 
+                          background: 'rgba(239, 68, 68, 0.15)', 
+                          color: '#fca5a5', 
+                          fontWeight: 600,
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        ⚠️ Unprocessable
+                      </span>
+                    </div>
+                  )}
                   <h3 style={{ fontSize: '1.25rem', marginBottom: '8px', fontWeight: 600 }}>{nb.title || 'Untitled Notebook'}</h3>
                   <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                     📦 {nb.pages?.length || 0} Synced Pages
                   </p>
-                  <span style={{ fontSize: '0.875rem', color: 'var(--accent)', fontWeight: 500 }}>
+                  <span style={{ fontSize: '0.875rem', color: isUnprocessable ? '#fca5a5' : 'var(--accent)', fontWeight: 500 }}>
                     Open Notebook →
                   </span>
                 </div>
