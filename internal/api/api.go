@@ -833,6 +833,11 @@ func (s *Server) HandleTogglePageProcessed(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if notebook.Status == pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
+		http.Error(w, "notebook is archived and read-only", http.StatusForbidden)
+		return
+	}
+
 	found := false
 	for _, page := range notebook.Pages {
 		if page.Id == pageID {
@@ -915,6 +920,11 @@ func (s *Server) HandleCreateIssue(w http.ResponseWriter, r *http.Request) {
 	notebook, err := s.store.GetNotebook(ctx, notebookID)
 	if err != nil {
 		http.Error(w, "notebook not found", http.StatusNotFound)
+		return
+	}
+
+	if notebook.Status == pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
+		http.Error(w, "notebook is archived and read-only", http.StatusForbidden)
 		return
 	}
 

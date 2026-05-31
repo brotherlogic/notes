@@ -74,3 +74,62 @@ func TestHandleTogglePageProcessed(t *testing.T) {
 		t.Errorf("Expected page processed flag to be true, got false")
 	}
 }
+
+func TestHandleTogglePageProcessed_Archived(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-github-user"
+	notebookID := "folder_abc"
+	pageID := "folder_abc-page-file_xyz"
+
+	// 1. Preset UserConfig
+	err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername: username,
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	// 2. Preset Notebook with Status = pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE and a page that has processed = false
+	err = store.SaveNotebook(ctx, &pb.Notebook{
+		Id:     notebookID,
+		Status: pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE,
+		Pages: []*pb.Page{
+			{
+				Id:        pageID,
+				Processed: false,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset notebook: %v", err)
+	}
+
+	// 3. Make POST request to mark the page as processed
+	payload := `{"processed": true}`
+	req := httptest.NewRequest("POST", "/api/pages/folder_abc-page-file_xyz/processed", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	// 4. Call handler
+	server.HandleTogglePageProcessed(w, req)
+	resp := w.Result()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("Expected status 403 Forbidden, got %v", resp.StatusCode)
+	}
+
+	// 5. Retrieve notebook and assert page processed flag is still false
+	notebook, err := store.GetNotebook(ctx, notebookID)
+	if err != nil {
+		t.Fatalf("Failed to retrieve notebook: %v", err)
+	}
+
+	if notebook.Pages[0].Processed {
+		t.Errorf("Expected page processed flag to remain false, got true")
+	}
+}
