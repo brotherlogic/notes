@@ -112,4 +112,16 @@ func TestHandleServeAsset(t *testing.T) {
 	if respNotFound.StatusCode != http.StatusNotFound {
 		t.Errorf("Expected status 404 Not Found, got %v", respNotFound.StatusCode)
 	}
+
+	// --- TEST CASE 4: Malformed Page ID (Path Traversal attempt) ---
+	reqMalformed := httptest.NewRequest("GET", "/api/pages/folder_123-page-file_..abc/image", nil)
+	reqMalformed.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	wMalformed := httptest.NewRecorder()
+
+	server.HandleServeAsset(wMalformed, reqMalformed)
+	respMalformed := wMalformed.Result()
+
+	if respMalformed.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status 400 Bad Request, got %v", respMalformed.StatusCode)
+	}
 }
