@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -769,16 +770,42 @@ func (s *Server) HandleServeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve flat filesystem binary file path
-	filePath := filepath.Join(s.binaryDir, pageID+".bin")
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		http.Error(w, "page asset not found", http.StatusNotFound)
+	// 1. Sanitize and validate pageID to prevent path traversal vulnerabilities
+	if matched, _ := regexp.MatchString(`^[a-zA-Z0-9_-]+$`, pageID); !matched {
+		http.Error(w, "bad request: invalid page ID format", http.StatusBadRequest)
 		return
 	}
 
-	// Serve raw bytes with proper header
+	// 2. Resolve safe filesystem binary file path
+	safePageID := filepath.Base(pageID)
+	filePath := filepath.Join(s.binaryDir, safePageID+".bin")
+
+	// Extra safety check to prevent path traversal
+	cleanFilePath := filepath.Clean(filePath)
+	cleanBinaryDir := filepath.Clean(s.binaryDir)
+	if !strings.HasPrefix(cleanFilePath, cleanBinaryDir) {
+		http.Error(w, "bad request: invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Open and check file existence
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "page asset not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "failed to open page asset", http.StatusInternalServerError)
+		}
+		return
+	}
+	defer file.Close()
+
+	// 4. Set correct image/png headers and copy raw bytes directly
 	w.Header().Set("Content-Type", "image/png")
-	http.ServeFile(w, r, filePath)
+	_, err = io.Copy(w, file)
+	if err != nil {
+		return
+	}
 }
 
 type TogglePageProcessedRequest struct {
