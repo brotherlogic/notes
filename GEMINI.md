@@ -29,7 +29,7 @@ This project is a **Notes** management system designed to sync, visualize, and p
 The codebase follows standard Go and React design conventions. Maintain this structure when adding new code:
 
 ```
-/workspaces/tasks/
+/workspaces/notes/
 ├── cmd/                # Entrypoints for backend service binaries
 ├── internal/           # Private Go application and business logic
 │   ├── sync/           # Google Drive syncing logic
