@@ -34,6 +34,11 @@
 			"type": "bind",
 			"options": "readonly" 
 		},
+	           {
+                "source": "${localEnv:HOME}/.gemini",
+                "target": "/home/vscode/.gemini",
+                "type": "bind"
+            },
 	        		"source=/var/run/dbus,target=/var/run/dbus,type=bind",
 		"source=/run/user,target=/run/user,type=bind"
 	]
