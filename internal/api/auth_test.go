@@ -213,6 +213,117 @@ func TestGetUserConfigAndNotebooks(t *testing.T) {
 	}
 }
 
+func TestHandleGetNotebooks_FiltersByUserFolder(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+
+	// Preset users with different configured Google Drive folders
+	if err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      "user-a",
+		GdriveNotesFolderId: "folder-a",
+	}); err != nil {
+		t.Fatalf("Failed to save user-a config: %v", err)
+	}
+	if err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      "user-b",
+		GdriveNotesFolderId: "folder-b",
+	}); err != nil {
+		t.Fatalf("Failed to save user-b config: %v", err)
+	}
+	if err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      "user-unconfigured",
+		GdriveNotesFolderId: "",
+	}); err != nil {
+		t.Fatalf("Failed to save user-unconfigured config: %v", err)
+	}
+
+	// Preset notebooks belonging to different folders
+	notebooksToSave := []*pb.Notebook{
+		{Id: "nb-a1", Title: "Notebook A1", DriveFolderId: "folder-a"},
+		{Id: "nb-a2", Title: "Notebook A2", DriveFolderId: "folder-a"},
+		{Id: "nb-b1", Title: "Notebook B1", DriveFolderId: "folder-b"},
+		{Id: "nb-orphan", Title: "Orphan Notebook", DriveFolderId: ""},
+	}
+	for _, nb := range notebooksToSave {
+		if err := store.SaveNotebook(ctx, nb); err != nil {
+			t.Fatalf("Failed to save notebook %s: %v", nb.Id, err)
+		}
+	}
+
+	// 1. user-a should only receive notebooks from folder-a
+	reqA := httptest.NewRequest("GET", "/api/notebooks", nil)
+	reqA.AddCookie(&http.Cookie{Name: "notes_session", Value: "user-a"})
+	wA := httptest.NewRecorder()
+	server.HandleGetNotebooks(wA, reqA)
+	if wA.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for user-a, got %v", wA.Result().StatusCode)
+	}
+	var gotA []struct {
+		ID            string `json:"id"`
+		DriveFolderID string `json:"driveFolderId"`
+	}
+	if err := json.NewDecoder(wA.Result().Body).Decode(&gotA); err != nil {
+		t.Fatalf("Failed to decode notebooks for user-a: %v", err)
+	}
+	if len(gotA) != 2 {
+		t.Fatalf("Expected 2 notebooks for user-a, got %d: %+v", len(gotA), gotA)
+	}
+	for _, nb := range gotA {
+		if nb.DriveFolderID != "folder-a" {
+			t.Errorf("Expected notebook driveFolderId 'folder-a', got %q (id=%s)", nb.DriveFolderID, nb.ID)
+		}
+	}
+
+	// 2. user-b should only receive notebooks from folder-b
+	reqB := httptest.NewRequest("GET", "/api/notebooks", nil)
+	reqB.AddCookie(&http.Cookie{Name: "notes_session", Value: "user-b"})
+	wB := httptest.NewRecorder()
+	server.HandleGetNotebooks(wB, reqB)
+	if wB.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for user-b, got %v", wB.Result().StatusCode)
+	}
+	var gotB []struct {
+		ID            string `json:"id"`
+		DriveFolderID string `json:"driveFolderId"`
+	}
+	if err := json.NewDecoder(wB.Result().Body).Decode(&gotB); err != nil {
+		t.Fatalf("Failed to decode notebooks for user-b: %v", err)
+	}
+	if len(gotB) != 1 || gotB[0].ID != "nb-b1" {
+		t.Fatalf("Expected only nb-b1 for user-b, got %+v", gotB)
+	}
+
+	// 3. user-unconfigured (empty folder ID) should receive an empty list, not orphan notebooks
+	reqUnconf := httptest.NewRequest("GET", "/api/notebooks", nil)
+	reqUnconf.AddCookie(&http.Cookie{Name: "notes_session", Value: "user-unconfigured"})
+	wUnconf := httptest.NewRecorder()
+	server.HandleGetNotebooks(wUnconf, reqUnconf)
+	if wUnconf.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for user-unconfigured, got %v", wUnconf.Result().StatusCode)
+	}
+	var gotUnconf []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(wUnconf.Result().Body).Decode(&gotUnconf); err != nil {
+		t.Fatalf("Failed to decode notebooks for user-unconfigured: %v", err)
+	}
+	if len(gotUnconf) != 0 {
+		t.Errorf("Expected 0 notebooks for user-unconfigured, got %+v", gotUnconf)
+	}
+
+	// 4. Missing UserConfig should return 404 Not Found
+	reqMissing := httptest.NewRequest("GET", "/api/notebooks", nil)
+	reqMissing.AddCookie(&http.Cookie{Name: "notes_session", Value: "non-existent-user"})
+	wMissing := httptest.NewRecorder()
+	server.HandleGetNotebooks(wMissing, reqMissing)
+	if wMissing.Result().StatusCode != http.StatusNotFound {
+		t.Errorf("Expected 404 Not Found for missing user config, got %v", wMissing.Result().StatusCode)
+	}
+}
+
 func TestGitHubLoginRedirect(t *testing.T) {
 	testClient := pstore_client.GetTestClient()
 	store := storage.NewStorage(testClient)

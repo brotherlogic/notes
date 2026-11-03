@@ -1361,7 +1361,14 @@ func (s *Server) HandleGetNotebooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username := cookie.Value
 	ctx := r.Context()
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		http.Error(w, "user config not found", http.StatusNotFound)
+		return
+	}
+
 	notebooks, err := s.store.GetNotebooks(ctx)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to get notebooks: %v", err), http.StatusInternalServerError)
@@ -1371,6 +1378,9 @@ func (s *Server) HandleGetNotebooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var serialized []string
 	for _, nb := range notebooks {
+		if config.GdriveNotesFolderId == "" || nb.DriveFolderId != config.GdriveNotesFolderId {
+			continue
+		}
 		bytes, err := protojson.Marshal(nb)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
