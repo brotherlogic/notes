@@ -2,9 +2,12 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -319,5 +322,154 @@ func TestHandleListGitHubRepos(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "brotherlogic/notes") {
 		t.Errorf("Expected response body to contain 'brotherlogic/notes', got %s", w.Body.String())
+	}
+}
+
+func TestRealGitHubClient_CreateIssue_UsesCropURLInsteadOfBase64(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "real_gh_issues_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "test-github-user"
+	pageID := "folder_123-page-1"
+	localPath := filepath.Join(tempDir, pageID+".bin")
+
+	if err := writeValidPNG(localPath); err != nil {
+		t.Fatalf("Failed to write mock PNG page file: %v", err)
+	}
+
+	if err := store.SaveNotebook(ctx, &pb.Notebook{
+		Id:            "folder_123",
+		GithubProject: "brotherlogic/notes",
+		Pages: []*pb.Page{
+			{
+				Id:            pageID,
+				LocalFilePath: localPath,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Failed to preset notebook: %v", err)
+	}
+
+	if err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:   username,
+		GithubOauthToken: "gho_mock_token",
+	}); err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	var capturedTitle, capturedBody string
+	http.DefaultClient.Transport = &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			if req.Method == "POST" && req.URL.String() == "https://api.github.com/repos/brotherlogic/notes/issues" {
+				var payload struct {
+					Title string `json:"title"`
+					Body  string `json:"body"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+					return nil, err
+				}
+				capturedTitle = payload.Title
+				capturedBody = payload.Body
+				return &http.Response{
+					StatusCode: http.StatusCreated,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"id": 101}`)),
+				}, nil
+			}
+			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.String())
+		},
+	}
+
+	// Use default RealGitHubClient created by NewServer
+	server := api.NewServer(store)
+	server.SetBinaryDir(tempDir)
+	server.SetRedirectHost("https://notes.brotherlogic.org")
+
+	payload := `{"page_id": "folder_123-page-1", "x": 10, "y": 20, "width": 50, "height": 40, "title": "Fix crop URL", "body": "Issue description text"}`
+	req := httptest.NewRequest("POST", "/api/issues/create", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	server.HandleCreateIssue(w, req)
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %v", resp.StatusCode)
+	}
+
+	if capturedTitle != "Fix crop URL" {
+		t.Errorf("Expected title 'Fix crop URL', got %q", capturedTitle)
+	}
+
+	if strings.Contains(capturedBody, "data:image/png;base64,") {
+		t.Errorf("Expected issue body NOT to contain base64 data URI, got: %s", capturedBody)
+	}
+
+	expectedPrefix := "https://notes.brotherlogic.org/api/crops/"
+	if !strings.Contains(capturedBody, expectedPrefix) {
+		t.Errorf("Expected issue body to contain crop URL prefix %q, got: %s", expectedPrefix, capturedBody)
+	}
+
+	// Extract the /api/crops/<hash>.png path from the Markdown image tag and fetch it via HandleServeCrop
+	idx := strings.Index(capturedBody, "/api/crops/")
+	if idx == -1 {
+		t.Fatalf("Failed to find /api/crops/ in issue body: %s", capturedBody)
+	}
+	cropPath := strings.TrimSuffix(capturedBody[idx:], ")")
+
+	// Request without session cookie (simulating GitHub Camo proxy)
+	cropReq := httptest.NewRequest("GET", cropPath, nil)
+	cropW := httptest.NewRecorder()
+	server.HandleServeCrop(cropW, cropReq)
+	cropResp := cropW.Result()
+
+	if cropResp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 OK from HandleServeCrop, got %v", cropResp.StatusCode)
+	}
+	if cropResp.Header.Get("Content-Type") != "image/png" {
+		t.Errorf("Expected Content-Type 'image/png', got %q", cropResp.Header.Get("Content-Type"))
+	}
+
+	decodedImg, err := png.Decode(cropResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to decode served crop PNG: %v", err)
+	}
+	if decodedImg.Bounds().Dx() != 50 || decodedImg.Bounds().Dy() != 40 {
+		t.Errorf("Expected cropped image dimensions 50x40, got %dx%d", decodedImg.Bounds().Dx(), decodedImg.Bounds().Dy())
+	}
+
+	// Verify security & error states on HandleServeCrop
+	// 1. Path traversal / malformed ID
+	badReq := httptest.NewRequest("GET", "/api/crops/..%2Fsecret.png", nil)
+	badW := httptest.NewRecorder()
+	server.HandleServeCrop(badW, badReq)
+	if badW.Result().StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected 400 Bad Request for malformed crop ID, got %v", badW.Result().StatusCode)
+	}
+
+	// 2. Non-existent crop ID
+	notFoundReq := httptest.NewRequest("GET", "/api/crops/0123456789abcdef.png", nil)
+	notFoundW := httptest.NewRecorder()
+	server.HandleServeCrop(notFoundW, notFoundReq)
+	if notFoundW.Result().StatusCode != http.StatusNotFound {
+		t.Errorf("Expected 404 Not Found for missing crop ID, got %v", notFoundW.Result().StatusCode)
+	}
+
+	// 3. Disallowed HTTP method
+	postReq := httptest.NewRequest("POST", cropPath, nil)
+	postW := httptest.NewRecorder()
+	server.HandleServeCrop(postW, postReq)
+	if postW.Result().StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Expected 405 Method Not Allowed for POST, got %v", postW.Result().StatusCode)
 	}
 }
