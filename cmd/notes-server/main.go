@@ -20,16 +20,25 @@ import (
 
 // DynamicGDriveClient maps dynamic token configurations to Google Drive client instances.
 type DynamicGDriveClient struct {
-	store      *storage.Storage
-	tokenCache map[string]string
-	mu         sync.RWMutex
+	store              *storage.Storage
+	gDriveClientID     string
+	gDriveClientSecret string
+	tokenCache         map[string]string
+	userCache          map[string]string
+	mu                 sync.RWMutex
 }
 
 func NewDynamicGDriveClient(store *storage.Storage) *DynamicGDriveClient {
 	return &DynamicGDriveClient{
 		store:      store,
 		tokenCache: make(map[string]string),
+		userCache:  make(map[string]string),
 	}
+}
+
+func (d *DynamicGDriveClient) SetOAuthCredentials(clientID, clientSecret string) {
+	d.gDriveClientID = clientID
+	d.gDriveClientSecret = clientSecret
 }
 
 func (d *DynamicGDriveClient) ListFiles(ctx context.Context, folderID string) ([]*notesSync.GDriveFile, error) {
@@ -40,10 +49,19 @@ func (d *DynamicGDriveClient) ListFiles(ctx context.Context, folderID string) ([
 	}
 
 	var token string
+	var matchedUser string
 	for _, username := range users {
 		config, err := d.store.GetUserConfig(ctx, username)
 		if err == nil && config.GdriveNotesFolderId == folderID {
-			token = config.GdriveOauthToken
+			if config.GdriveOauthToken == "" && config.GdriveRefreshToken == "" {
+				break
+			}
+			refreshedToken, err := api.RefreshGDriveTokenIfNeeded(ctx, d.store, d.gDriveClientID, d.gDriveClientSecret, config)
+			if err != nil {
+				return nil, fmt.Errorf("failed to refresh gdrive token: %w", err)
+			}
+			token = refreshedToken
+			matchedUser = username
 			break
 		}
 	}
@@ -58,10 +76,11 @@ func (d *DynamicGDriveClient) ListFiles(ctx context.Context, folderID string) ([
 		return nil, err
 	}
 
-	// Cache the token for subsequent DownloadFile calls
+	// Cache the token and owning user for subsequent DownloadFile calls
 	d.mu.Lock()
 	for _, f := range files {
 		d.tokenCache[f.ID] = token
+		d.userCache[f.ID] = matchedUser
 	}
 	d.mu.Unlock()
 
@@ -71,7 +90,19 @@ func (d *DynamicGDriveClient) ListFiles(ctx context.Context, folderID string) ([
 func (d *DynamicGDriveClient) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
 	d.mu.RLock()
 	token, exists := d.tokenCache[fileID]
+	cachedUser := d.userCache[fileID]
 	d.mu.RUnlock()
+
+	if exists && cachedUser != "" {
+		if config, err := d.store.GetUserConfig(ctx, cachedUser); err == nil {
+			if refreshedToken, err := api.RefreshGDriveTokenIfNeeded(ctx, d.store, d.gDriveClientID, d.gDriveClientSecret, config); err == nil && refreshedToken != "" {
+				token = refreshedToken
+				d.mu.Lock()
+				d.tokenCache[fileID] = token
+				d.mu.Unlock()
+			}
+		}
+	}
 
 	if !exists {
 		// Fallback: search all configs if cache miss (e.g. server restarted during loop)
@@ -79,8 +110,12 @@ func (d *DynamicGDriveClient) DownloadFile(ctx context.Context, fileID string) (
 		if err == nil {
 			for _, username := range users {
 				config, err := d.store.GetUserConfig(ctx, username)
-				if err == nil && config.GdriveOauthToken != "" {
-					token = config.GdriveOauthToken
+				if err == nil && (config.GdriveOauthToken != "" || config.GdriveRefreshToken != "") {
+					refreshedToken, err := api.RefreshGDriveTokenIfNeeded(ctx, d.store, d.gDriveClientID, d.gDriveClientSecret, config)
+					if err != nil {
+						return nil, fmt.Errorf("failed to refresh gdrive token: %w", err)
+					}
+					token = refreshedToken
 					break
 				}
 			}
@@ -147,6 +182,7 @@ func main() {
 
 	// Instantiate Dynamic Google Drive client wrapper
 	dynamicGDrive := NewDynamicGDriveClient(store)
+	dynamicGDrive.SetOAuthCredentials(cfg.GDriveClientID, cfg.GDriveClientSecret)
 
 	// Instantiate Sync Worker
 	worker := notesSync.NewWorker(store, dynamicGDrive, cfg.DataDir)

@@ -380,7 +380,10 @@ func (s *Server) HandleGDriveCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
-func (s *Server) refreshGDriveTokenIfNeeded(ctx context.Context, username string, config *pb.UserConfig) (string, error) {
+// RefreshGDriveTokenIfNeeded checks whether the user's Google Drive OAuth token
+// is expired (or within 5 minutes of expiry) and refreshes it using GdriveRefreshToken,
+// persisting the updated token and expiry in storage.
+func RefreshGDriveTokenIfNeeded(ctx context.Context, store *storage.Storage, clientID, clientSecret string, config *pb.UserConfig) (string, error) {
 	if config.GdriveRefreshToken == "" {
 		return config.GdriveOauthToken, nil
 	}
@@ -392,8 +395,8 @@ func (s *Server) refreshGDriveTokenIfNeeded(ctx context.Context, username string
 
 	// Token has expired or is about to expire, perform OAuth 2.0 refresh
 	formValues := url.Values{}
-	formValues.Set("client_id", s.gDriveClientID)
-	formValues.Set("client_secret", s.gDriveClientSecret)
+	formValues.Set("client_id", clientID)
+	formValues.Set("client_secret", clientSecret)
 	formValues.Set("refresh_token", config.GdriveRefreshToken)
 	formValues.Set("grant_type", "refresh_token")
 
@@ -430,12 +433,16 @@ func (s *Server) refreshGDriveTokenIfNeeded(ctx context.Context, username string
 	config.GdriveOauthToken = tokenResp.AccessToken
 	config.GdriveTokenExpiry = time.Now().Unix() + tokenResp.ExpiresIn
 
-	err = s.store.SaveUserConfig(ctx, config)
+	err = store.SaveUserConfig(ctx, config)
 	if err != nil {
 		return "", fmt.Errorf("failed to save refreshed user config: %w", err)
 	}
 
 	return config.GdriveOauthToken, nil
+}
+
+func (s *Server) refreshGDriveTokenIfNeeded(ctx context.Context, username string, config *pb.UserConfig) (string, error) {
+	return RefreshGDriveTokenIfNeeded(ctx, s.store, s.gDriveClientID, s.gDriveClientSecret, config)
 }
 
 // HandleListGDriveFolders queries the Google Drive API for all folders in the user's GDrive.
