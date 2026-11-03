@@ -155,10 +155,12 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 
 			// Retrieve existing notebook to preserve metadata (processed states, linked github projects, image hashes)
 			existingNotebook, getErr := s.store.GetNotebook(ctx, notebookID)
+			var existingGithubProject string
 			processedMap := make(map[int32]bool)
 			githubProjectMap := make(map[int32]string)
 			imageHashMap := make(map[int32]string)
 			if getErr == nil && existingNotebook != nil {
+				existingGithubProject = existingNotebook.GithubProject
 				for _, p := range existingNotebook.Pages {
 					processedMap[p.PageNumber] = p.Processed
 					githubProjectMap[p.PageNumber] = p.GithubProject
@@ -222,6 +224,7 @@ func (s *Worker) SyncUserNotes(ctx context.Context, username string) (err error)
 				Id:            notebookID,
 				Title:         notebookTitle,
 				DriveFolderId: folderID,
+				GithubProject: existingGithubProject,
 				Pages:         pages,
 				LastUpdated:   time.Now().Unix(),
 				Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,
@@ -441,6 +444,7 @@ func (s *Worker) SyncNotebook(ctx context.Context, username string, notebookID s
 		Id:            notebookID,
 		Title:         notebookTitle,
 		DriveFolderId: folderID,
+		GithubProject: existingNotebook.GithubProject,
 		Pages:         pages,
 		LastUpdated:   time.Now().Unix(),
 		Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,

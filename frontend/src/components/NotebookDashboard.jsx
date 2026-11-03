@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import GitHubRepoModal from './GitHubRepoModal';
 
 export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, onLogout }) {
   const [userConfig, setUserConfig] = useState(null);
@@ -11,6 +12,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
   const [isModalLoading, setIsModalLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ active: false, current: 0, total: 0, error: '' });
   const [syncingNotebooks, setSyncingNotebooks] = useState({});
+  const [repoModalNotebook, setRepoModalNotebook] = useState(null);
 
   const [folderDetails, setFolderDetails] = useState(null);
   const [selectedFolderPreview, setSelectedFolderPreview] = useState(null);
@@ -619,7 +621,7 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                     </div>
                   )}
                   <h3 style={{ fontSize: '1.25rem', marginBottom: '8px', fontWeight: 600 }}>{nb.title || 'Untitled Notebook'}</h3>
-                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
                     {syncingNotebooks[nb.id]?.loading ? (
                       <span style={{ color: 'var(--accent)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                         <span className="spin" style={{ display: 'inline-block' }}>🔄</span>
@@ -629,6 +631,49 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
                       `📦 ${nb.pages?.length || 0} Synced Pages`
                     )}
                   </p>
+
+                  {/* GitHub Repository Link Control */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <button
+                      type="button"
+                      disabled={isArchived}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isArchived) {
+                          setRepoModalNotebook(nb);
+                        }
+                      }}
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: 500,
+                        backgroundColor: (nb.githubProject || nb.github_project)
+                          ? 'rgba(56, 189, 248, 0.1)'
+                          : 'rgba(255, 255, 255, 0.04)',
+                        color: (nb.githubProject || nb.github_project)
+                          ? 'var(--accent)'
+                          : 'var(--text-secondary)',
+                        border: (nb.githubProject || nb.github_project)
+                          ? '1px solid rgba(56, 189, 248, 0.25)'
+                          : '1px solid var(--border-frosted)',
+                        cursor: isArchived ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'var(--transition-smooth)',
+                        fontFamily: 'var(--font-body)'
+                      }}
+                    >
+                      <span>🐙</span>
+                      <span>
+                        {(nb.githubProject || nb.github_project)
+                          ? `${nb.githubProject || nb.github_project}`
+                          : 'Link GitHub Repo'}
+                      </span>
+                      {!isArchived && <span style={{ opacity: 0.7, fontSize: '0.7rem' }}>✏️</span>}
+                    </button>
+                  </div>
                   
                   {syncingNotebooks[nb.id]?.error && (
                     <div 
@@ -836,6 +881,16 @@ export default function NotebookDashboard({ onSelectNotebook, activeNotebookId, 
           </div>
         </div>
       )}
+
+      {/* GitHub Repository Link Modal */}
+      <GitHubRepoModal
+        notebook={repoModalNotebook}
+        isOpen={Boolean(repoModalNotebook)}
+        onClose={() => setRepoModalNotebook(null)}
+        onSaved={(updatedNb) => {
+          setNotebooks(prev => prev.map(item => (item.id === updatedNb.id ? updatedNb : item)));
+        }}
+      />
     </div>
   );
 }

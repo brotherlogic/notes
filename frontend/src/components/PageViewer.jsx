@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
+import GitHubRepoModal from './GitHubRepoModal';
 
-export default function PageViewer({ notebook, onClose }) {
+export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [showProcessed, setShowProcessed] = useState(false);
   const [animate, setAnimate] = useState(false);
+  const [isRepoModalOpen, setIsRepoModalOpen] = useState(false);
 
   const isArchived = notebook.status === 'NOTEBOOK_DELETED_ON_REMOTE';
   const isUnprocessable = notebook.status === 'NOTEBOOK_UNPROCESSABLE';
+  const linkedRepo = notebook.githubProject || notebook.github_project || '';
 
   // Crop State
   const [isDrawing, setIsDrawing] = useState(false);
@@ -161,12 +164,38 @@ export default function PageViewer({ notebook, onClose }) {
   return (
     <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
       {/* Navigation Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
         <button onClick={onClose} className="btn btn-secondary">
           ← Back to Notebooks
         </button>
 
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{notebook.title}</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{notebook.title}</h2>
+          <button
+            type="button"
+            disabled={isArchived}
+            onClick={() => !isArchived && setIsRepoModalOpen(true)}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '8px',
+              fontSize: '0.75rem',
+              fontWeight: 500,
+              backgroundColor: linkedRepo ? 'rgba(56, 189, 248, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+              color: linkedRepo ? 'var(--accent)' : 'var(--text-secondary)',
+              border: linkedRepo ? '1px solid rgba(56, 189, 248, 0.25)' : '1px solid var(--border-frosted)',
+              cursor: isArchived ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'var(--transition-smooth)',
+              fontFamily: 'var(--font-body)'
+            }}
+          >
+            <span>🐙</span>
+            <span>{linkedRepo ? linkedRepo : 'Link GitHub Repo'}</span>
+            {!isArchived && <span style={{ opacity: 0.7, fontSize: '0.7rem' }}>✏️</span>}
+          </button>
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
@@ -411,9 +440,38 @@ export default function PageViewer({ notebook, onClose }) {
               margin: '20px'
             }}
           >
-            <h3 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '20px' }}>
+            <h3 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '12px' }}>
               Create GitHub Issue from Crop
             </h3>
+
+            <div style={{
+              marginBottom: '16px',
+              padding: '10px 12px',
+              borderRadius: '10px',
+              backgroundColor: linkedRepo ? 'rgba(56, 189, 248, 0.08)' : 'rgba(239, 68, 68, 0.1)',
+              border: linkedRepo ? '1px solid rgba(56, 189, 248, 0.2)' : '1px solid rgba(239, 68, 68, 0.3)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '10px',
+              fontSize: '0.85rem'
+            }}>
+              <span style={{ color: linkedRepo ? 'var(--text-primary)' : '#fca5a5' }}>
+                {linkedRepo ? (
+                  <>Target Repo: <strong style={{ color: 'var(--accent)' }}>{linkedRepo}</strong></>
+                ) : (
+                  '⚠️ No GitHub repository linked to this notebook.'
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsRepoModalOpen(true)}
+                className="btn btn-secondary"
+                style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+              >
+                {linkedRepo ? 'Change' : 'Link Repo'}
+              </button>
+            </div>
             
             <form onSubmit={handleSubmitIssue} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -470,7 +528,7 @@ export default function PageViewer({ notebook, onClose }) {
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !linkedRepo}
                 >
                   {isSubmitting ? 'Filing Issue...' : '🐙 File Issue'}
                 </button>
@@ -479,6 +537,18 @@ export default function PageViewer({ notebook, onClose }) {
           </div>
         </div>
       )}
+
+      {/* GitHub Repository Link Modal */}
+      <GitHubRepoModal
+        notebook={notebook}
+        isOpen={isRepoModalOpen}
+        onClose={() => setIsRepoModalOpen(false)}
+        onSaved={(updatedNb) => {
+          if (onUpdateNotebook) {
+            onUpdateNotebook(updatedNb);
+          }
+        }}
+      />
     </div>
   );
 }

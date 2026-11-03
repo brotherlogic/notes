@@ -116,6 +116,7 @@ export default function App() {
         <PageViewer
           notebook={selectedNotebook}
           onClose={() => setSelectedNotebook(null)}
+          onUpdateNotebook={(updatedNb) => setSelectedNotebook(updatedNb)}
         />
       ) : (
         <NotebookDashboard

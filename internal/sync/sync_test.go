@@ -534,6 +534,7 @@ func TestSyncNotebook(t *testing.T) {
 		Id:            "file_note_1",
 		Title:         "Lectures",
 		DriveFolderId: "folder_123",
+		GithubProject: "brotherlogic/notes",
 		Status:        pb.NotebookStatus_NOTEBOOK_UNPROCESSABLE,
 		Pages: []*pb.Page{
 			{
@@ -577,6 +578,10 @@ func TestSyncNotebook(t *testing.T) {
 		t.Errorf("Expected status to be ACTIVE, got %v", notebook.Status)
 	}
 
+	if notebook.GithubProject != "brotherlogic/notes" {
+		t.Errorf("Expected GithubProject 'brotherlogic/notes' to be preserved across SyncNotebook, got %q", notebook.GithubProject)
+	}
+
 	if len(notebook.Pages) != 2 {
 		t.Fatalf("Expected 2 pages, got %d", len(notebook.Pages))
 	}
@@ -610,5 +615,66 @@ func TestSyncNotebook(t *testing.T) {
 
 	if nbDeleted.Status != pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
 		t.Errorf("Expected status to be DELETED_ON_REMOTE, got %v", nbDeleted.Status)
+	}
+}
+
+func TestSyncUserNotes_PreservesGithubProject(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+
+	tempDir, err := os.MkdirTemp("", "notes_sync_preserve_gh_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ctx := context.Background()
+	username := "gh-preserve-user"
+	folderID := "folder_gh_preserve"
+
+	err = store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:      username,
+		GdriveNotesFolderId: folderID,
+		GdriveOauthToken:    "mock_token",
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	err = store.SaveNotebook(ctx, &pb.Notebook{
+		Id:            "file_gh_1",
+		Title:         "ProjectNotes",
+		DriveFolderId: folderID,
+		GithubProject: "brotherlogic/notes",
+		Status:        pb.NotebookStatus_NOTEBOOK_ACTIVE,
+	})
+	if err != nil {
+		t.Fatalf("Failed to preset notebook: %v", err)
+	}
+
+	mockGDrive := &MockGDriveClient{
+		Files: []*sync.GDriveFile{
+			{
+				ID:          "file_gh_1",
+				Name:        "ProjectNotes.note",
+				UpdatedTime: 1600000000,
+			},
+		},
+		Data: map[string][]byte{
+			"file_gh_1": []byte("pages=1"),
+		},
+	}
+
+	worker := sync.NewWorker(store, mockGDrive, tempDir)
+	if err := worker.SyncUserNotes(ctx, username); err != nil {
+		t.Fatalf("SyncUserNotes failed: %v", err)
+	}
+
+	nb, err := store.GetNotebook(ctx, "file_gh_1")
+	if err != nil {
+		t.Fatalf("Failed to get notebook: %v", err)
+	}
+	if nb.GithubProject != "brotherlogic/notes" {
+		t.Errorf("Expected GithubProject 'brotherlogic/notes' to be preserved across SyncUserNotes, got %q", nb.GithubProject)
 	}
 }
