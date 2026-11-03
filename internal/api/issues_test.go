@@ -23,6 +23,7 @@ type MockGitHubClient struct {
 	Title    string
 	Body     string
 	CropData []byte
+	Repos    []api.GitHubRepo
 }
 
 func (m *MockGitHubClient) CreateIssue(ctx context.Context, token, repo, title, body string, cropData []byte) error {
@@ -31,6 +32,10 @@ func (m *MockGitHubClient) CreateIssue(ctx context.Context, token, repo, title, 
 	m.Body = body
 	m.CropData = cropData
 	return nil
+}
+
+func (m *MockGitHubClient) ListRepos(ctx context.Context, token string) ([]api.GitHubRepo, error) {
+	return m.Repos, nil
 }
 
 func writeValidPNG(path string) error {
@@ -201,5 +206,118 @@ func TestHandleCreateGitHubIssue_Archived(t *testing.T) {
 	// 5. Assert MockGitHubClient was not invoked
 	if mockGH.Repo != "" {
 		t.Errorf("Expected mock GitHub client to not be invoked, but Repo was set to %q", mockGH.Repo)
+	}
+}
+
+func TestHandleUpdateNotebookGitHubProject(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-github-user"
+	notebookID := "folder_123"
+
+	if err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:   username,
+		GithubOauthToken: "gho_mock_token",
+	}); err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	if err := store.SaveNotebook(ctx, &pb.Notebook{
+		Id:     notebookID,
+		Title:  "My Notes",
+		Status: pb.NotebookStatus_NOTEBOOK_ACTIVE,
+	}); err != nil {
+		t.Fatalf("Failed to preset notebook: %v", err)
+	}
+
+	// 1. Valid update
+	payload := `{"notebook_id": "folder_123", "github_project": "brotherlogic/notes"}`
+	req := httptest.NewRequest("POST", "/api/notebooks/github-project", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	server.HandleUpdateNotebookGitHubProject(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %v", w.Result().StatusCode)
+	}
+
+	nb, err := store.GetNotebook(ctx, notebookID)
+	if err != nil {
+		t.Fatalf("Failed to get notebook: %v", err)
+	}
+	if nb.GithubProject != "brotherlogic/notes" {
+		t.Errorf("Expected GithubProject 'brotherlogic/notes', got %q", nb.GithubProject)
+	}
+
+	// 2. Invalid format (missing slash)
+	badPayload := `{"notebook_id": "folder_123", "github_project": "invalid-repo-name"}`
+	badReq := httptest.NewRequest("POST", "/api/notebooks/github-project", strings.NewReader(badPayload))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	badW := httptest.NewRecorder()
+
+	server.HandleUpdateNotebookGitHubProject(badW, badReq)
+	if badW.Result().StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status 400 Bad Request for invalid repo format, got %v", badW.Result().StatusCode)
+	}
+
+	// 3. Archived notebook should return 403 Forbidden
+	if err := store.SaveNotebook(ctx, &pb.Notebook{
+		Id:     "archived_nb",
+		Title:  "Archived",
+		Status: pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE,
+	}); err != nil {
+		t.Fatalf("Failed to save archived notebook: %v", err)
+	}
+
+	archPayload := `{"notebook_id": "archived_nb", "github_project": "brotherlogic/notes"}`
+	archReq := httptest.NewRequest("POST", "/api/notebooks/github-project", strings.NewReader(archPayload))
+	archReq.Header.Set("Content-Type", "application/json")
+	archReq.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	archW := httptest.NewRecorder()
+
+	server.HandleUpdateNotebookGitHubProject(archW, archReq)
+	if archW.Result().StatusCode != http.StatusForbidden {
+		t.Errorf("Expected status 403 Forbidden for archived notebook, got %v", archW.Result().StatusCode)
+	}
+}
+
+func TestHandleListGitHubRepos(t *testing.T) {
+	testClient := pstore_client.GetTestClient()
+	store := storage.NewStorage(testClient)
+	server := api.NewServer(store)
+
+	ctx := context.Background()
+	username := "test-github-user"
+
+	if err := store.SaveUserConfig(ctx, &pb.UserConfig{
+		GithubUsername:   username,
+		GithubOauthToken: "gho_mock_token",
+	}); err != nil {
+		t.Fatalf("Failed to preset user: %v", err)
+	}
+
+	mockGH := &MockGitHubClient{
+		Repos: []api.GitHubRepo{
+			{ID: 1, Name: "notes", FullName: "brotherlogic/notes"},
+			{ID: 2, Name: "pstore", FullName: "brotherlogic/pstore"},
+		},
+	}
+	server.SetGitHubClient(mockGH)
+
+	req := httptest.NewRequest("GET", "/api/github/repos", nil)
+	req.AddCookie(&http.Cookie{Name: "notes_session", Value: username})
+	w := httptest.NewRecorder()
+
+	server.HandleListGitHubRepos(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 OK, got %v", w.Result().StatusCode)
+	}
+	if !strings.Contains(w.Body.String(), "brotherlogic/notes") {
+		t.Errorf("Expected response body to contain 'brotherlogic/notes', got %s", w.Body.String())
 	}
 }

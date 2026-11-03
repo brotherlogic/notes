@@ -23,8 +23,15 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
+type GitHubRepo struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	FullName string `json:"full_name"`
+}
+
 type GitHubClient interface {
 	CreateIssue(ctx context.Context, token, repo, title, body string, cropData []byte) error
+	ListRepos(ctx context.Context, token string) ([]GitHubRepo, error)
 }
 
 type SyncProgressProvider interface {
@@ -1065,6 +1072,136 @@ func (g *RealGitHubClient) CreateIssue(ctx context.Context, token, repo, title, 
 	}
 
 	return nil
+}
+
+func (g *RealGitHubClient) ListRepos(ctx context.Context, token string) ([]GitHubRepo, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user/repos?per_page=100&sort=updated", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create github repos request: %w", err)
+	}
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "brotherlogic-notes")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute github repos request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("github api returned status %s: %s", resp.Status, string(respBytes))
+	}
+
+	var repos []GitHubRepo
+	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+		return nil, fmt.Errorf("failed to decode github repos response: %w", err)
+	}
+
+	return repos, nil
+}
+
+// HandleListGitHubRepos queries the GitHub API for all repositories accessible by the authenticated user.
+func (s *Server) HandleListGitHubRepos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	username := cookie.Value
+	ctx := r.Context()
+
+	config, err := s.store.GetUserConfig(ctx, username)
+	if err != nil {
+		http.Error(w, "user config not found", http.StatusNotFound)
+		return
+	}
+
+	if config.GithubOauthToken == "" {
+		http.Error(w, "github oauth token not configured", http.StatusBadRequest)
+		return
+	}
+
+	repos, err := s.ghClient.ListRepos(ctx, config.GithubOauthToken)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to list github repositories: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(repos); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+type UpdateNotebookGitHubProjectRequest struct {
+	NotebookID    string `json:"notebook_id"`
+	GithubProject string `json:"github_project"`
+}
+
+var githubProjectPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`)
+
+// HandleUpdateNotebookGitHubProject links or updates a notebook's target GitHub repository ("owner/repo").
+func (s *Server) HandleUpdateNotebookGitHubProject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("notes_session")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req UpdateNotebookGitHubProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.NotebookID) == "" {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	project := strings.TrimSpace(req.GithubProject)
+	if project != "" && !githubProjectPattern.MatchString(project) {
+		http.Error(w, "invalid github_project format: expected owner/repo", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	notebook, err := s.store.GetNotebook(ctx, req.NotebookID)
+	if err != nil {
+		http.Error(w, "notebook not found", http.StatusNotFound)
+		return
+	}
+
+	if notebook.Status == pb.NotebookStatus_NOTEBOOK_DELETED_ON_REMOTE {
+		http.Error(w, "notebook is archived and read-only", http.StatusForbidden)
+		return
+	}
+
+	notebook.GithubProject = project
+	notebook.LastUpdated = time.Now().Unix()
+
+	if err := s.store.SaveNotebook(ctx, notebook); err != nil {
+		http.Error(w, fmt.Sprintf("failed to save notebook: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	bytes, err := protojson.Marshal(notebook)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(bytes)
 }
 
 // HandleGetUserConfig retrieves the user configuration.
