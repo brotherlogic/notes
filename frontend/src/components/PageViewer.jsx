@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import GitHubRepoModal from './GitHubRepoModal';
 
 export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
+  const [pages, setPages] = useState(() => notebook.pages || []);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [showProcessed, setShowProcessed] = useState(false);
   const [animate, setAnimate] = useState(false);
@@ -25,7 +26,11 @@ export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
   const imgRef = useRef(null);
   const containerRef = useRef(null);
 
-  const pagesWithIndex = (notebook.pages || []).map((page, index) => ({ page, index }));
+  useEffect(() => {
+    setPages(notebook.pages || []);
+  }, [notebook.pages]);
+
+  const pagesWithIndex = pages.map((page, index) => ({ page, index }));
   const filteredPages = pagesWithIndex
     .filter(({ page }) => {
       if (showProcessed) return true;
@@ -38,7 +43,10 @@ export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
     })
     .map(({ page }) => page);
 
-  const currentPage = filteredPages[currentPageIndex];
+  const safePageIndex = filteredPages.length > 0
+    ? Math.min(currentPageIndex, filteredPages.length - 1)
+    : 0;
+  const currentPage = filteredPages[safePageIndex];
 
   // Trigger page flip animations and reset crop box
   useEffect(() => {
@@ -46,34 +54,41 @@ export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
     setCropBox(null);
     const timer = setTimeout(() => setAnimate(false), 300);
     return () => clearTimeout(timer);
-  }, [currentPageIndex]);
+  }, [safePageIndex, currentPage?.id]);
 
   const handleNextPage = () => {
-    if (currentPageIndex < filteredPages.length - 1) {
-      setCurrentPageIndex(currentPageIndex + 1);
+    if (safePageIndex < filteredPages.length - 1) {
+      setCurrentPageIndex(safePageIndex + 1);
     }
   };
 
   const handlePrevPage = () => {
-    if (currentPageIndex > 0) {
-      setCurrentPageIndex(currentPageIndex - 1);
+    if (safePageIndex > 0) {
+      setCurrentPageIndex(safePageIndex - 1);
     }
   };
 
   const handleMarkProcessed = () => {
     if (!currentPage || isArchived) return;
-    fetch(`/api/pages/${currentPage.id}/processed`, {
+    const pageId = currentPage.id;
+    const nextProcessed = !currentPage.processed;
+
+    fetch(`/api/pages/${pageId}/processed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ processed: !currentPage.processed })
+      body: JSON.stringify({ processed: nextProcessed })
     })
       .then(res => {
         if (res.ok) {
-          currentPage.processed = !currentPage.processed;
-          if (currentPageIndex >= filteredPages.length - 1 && currentPageIndex > 0) {
-            setCurrentPageIndex(currentPageIndex - 1);
-          } else {
-            setCurrentPageIndex(currentPageIndex);
+          const updatedPages = pages.map(page =>
+            page.id === pageId ? { ...page, processed: nextProcessed } : page
+          );
+          if (safePageIndex >= filteredPages.length - 1 && safePageIndex > 0) {
+            setCurrentPageIndex(safePageIndex - 1);
+          }
+          setPages(updatedPages);
+          if (onUpdateNotebook) {
+            onUpdateNotebook({ ...notebook, pages: updatedPages });
           }
         }
       })
@@ -293,7 +308,7 @@ export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
               paddingBottom: '12px'
             }}>
               <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
-                Page {currentPage.pageNumber || currentPageIndex + 1} of {filteredPages.length}
+                Page {currentPage.pageNumber || safePageIndex + 1} of {filteredPages.length}
               </span>
               
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -399,17 +414,17 @@ export default function PageViewer({ notebook, onClose, onUpdateNotebook }) {
             <div style={{ display: 'flex', gap: '16px', marginTop: '24px' }}>
               <button
                 onClick={handlePrevPage}
-                disabled={currentPageIndex === 0}
+                disabled={safePageIndex === 0}
                 className="btn btn-secondary"
-                style={{ opacity: currentPageIndex === 0 ? 0.4 : 1 }}
+                style={{ opacity: safePageIndex === 0 ? 0.4 : 1 }}
               >
                 ◀ Previous Page
               </button>
               <button
                 onClick={handleNextPage}
-                disabled={currentPageIndex === filteredPages.length - 1}
+                disabled={safePageIndex === filteredPages.length - 1}
                 className="btn btn-secondary"
-                style={{ opacity: currentPageIndex === filteredPages.length - 1 ? 0.4 : 1 }}
+                style={{ opacity: safePageIndex === filteredPages.length - 1 ? 0.4 : 1 }}
               >
                 Next Page ▶
               </button>
