@@ -13,6 +13,9 @@ sudo apt update && sudo apt install -y \
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest 
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
+# Install frontend dependencies
+(cd "$(dirname "$0")/frontend" && npm ci)
+
 # Account for Ghostty
 tic -x ghostty.terminfo
 
