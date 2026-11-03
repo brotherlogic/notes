@@ -235,6 +235,7 @@ func main() {
 
 	// GitHub visual crop issue creations
 	mux.HandleFunc("/api/issues/create", server.HandleCreateIssue)
+	mux.HandleFunc("/api/crops/", server.HandleServeCrop)
 
 	// Serve React Frontend SPA built static assets
 	spa := spaHandler{staticPath: cfg.FrontendDir, indexPath: "index.html"}

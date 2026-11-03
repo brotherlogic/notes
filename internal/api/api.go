@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -72,6 +73,9 @@ func (s *Server) SetOAuthCredentials(githubID, githubSecret, gdriveID, gdriveSec
 
 func (s *Server) SetRedirectHost(host string) {
 	s.redirectHost = host
+	if rc, ok := s.ghClient.(*RealGitHubClient); ok {
+		rc.BaseURL = host
+	}
 }
 
 func (s *Server) getRedirectURI(r *http.Request, path string) string {
@@ -758,6 +762,9 @@ func (s *Server) HandleGetSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) SetBinaryDir(dir string) {
 	s.binaryDir = dir
+	if rc, ok := s.ghClient.(*RealGitHubClient); ok {
+		rc.BinaryDir = dir
+	}
 }
 
 // HandleServeAsset serves raw note page binary image files from flat storage to authorized users.
@@ -820,6 +827,57 @@ func (s *Server) HandleServeAsset(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+}
+
+var validCropIDPattern = regexp.MustCompile(`^[a-fA-F0-9]+$`)
+
+// HandleServeCrop serves persisted cropped note images for GitHub issue rendering.
+func (s *Server) HandleServeCrop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	prefix := "/api/crops/"
+	if !strings.HasPrefix(r.URL.Path, prefix) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	cropID := strings.TrimPrefix(r.URL.Path, prefix)
+	cropID = strings.TrimSuffix(cropID, ".png")
+	if cropID == "" || !validCropIDPattern.MatchString(cropID) {
+		http.Error(w, "bad request: invalid crop ID", http.StatusBadRequest)
+		return
+	}
+
+	safeCropID := filepath.Base(cropID)
+	filePath := filepath.Join(s.binaryDir, "crop_"+safeCropID+".png")
+
+	cleanFilePath := filepath.Clean(filePath)
+	cleanBinaryDir := filepath.Clean(s.binaryDir)
+	if !strings.HasPrefix(cleanFilePath, cleanBinaryDir) {
+		http.Error(w, "bad request: invalid path", http.StatusBadRequest)
+		return
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "crop asset not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "failed to open crop asset", http.StatusInternalServerError)
+		}
+		return
+	}
+	defer file.Close()
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = io.Copy(w, file)
 }
 
 type TogglePageProcessedRequest struct {
@@ -1031,8 +1089,27 @@ func (s *Server) HandleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cropBytes := buf.Bytes()
+	sum := sha256.Sum256(cropBytes)
+	hashHex := hex.EncodeToString(sum[:])
+
+	if s.binaryDir != "" {
+		if err := os.MkdirAll(s.binaryDir, 0755); err != nil {
+			http.Error(w, fmt.Sprintf("failed to create crop storage directory: %v", err), http.StatusInternalServerError)
+			return
+		}
+		cropPath := filepath.Join(s.binaryDir, "crop_"+hashHex+".png")
+		if err := os.WriteFile(cropPath, cropBytes, 0644); err != nil {
+			http.Error(w, fmt.Sprintf("failed to persist cropped image: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	cropURL := s.getRedirectURI(r, fmt.Sprintf("/api/crops/%s.png", hashHex))
+	ctx = context.WithValue(ctx, cropURLContextKey{}, cropURL)
+
 	// 5. Submit issue using GitHub client
-	err = s.ghClient.CreateIssue(ctx, config.GithubOauthToken, notebook.GithubProject, req.Title, req.Body, buf.Bytes())
+	err = s.ghClient.CreateIssue(ctx, config.GithubOauthToken, notebook.GithubProject, req.Title, req.Body, cropBytes)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to create github issue: %v", err), http.StatusInternalServerError)
 		return
@@ -1041,11 +1118,41 @@ func (s *Server) HandleCreateIssue(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-type RealGitHubClient struct{}
+type cropURLContextKey struct{}
+
+type RealGitHubClient struct {
+	BinaryDir string
+	BaseURL   string
+}
 
 func (g *RealGitHubClient) CreateIssue(ctx context.Context, token, repo, title, body string, cropData []byte) error {
-	base64Data := base64.StdEncoding.EncodeToString(cropData)
-	imgTag := fmt.Sprintf("\n\n### Crop Area\n![Handwritten Note Crop](data:image/png;base64,%s)", base64Data)
+	sum := sha256.Sum256(cropData)
+	hashHex := hex.EncodeToString(sum[:])
+
+	if g.BinaryDir != "" && len(cropData) > 0 {
+		cropPath := filepath.Join(g.BinaryDir, "crop_"+hashHex+".png")
+		if _, err := os.Stat(cropPath); os.IsNotExist(err) {
+			if err := os.MkdirAll(g.BinaryDir, 0755); err != nil {
+				return fmt.Errorf("failed to create crop storage directory: %w", err)
+			}
+			if err := os.WriteFile(cropPath, cropData, 0644); err != nil {
+				return fmt.Errorf("failed to persist cropped image: %w", err)
+			}
+		}
+	}
+
+	cropURL, _ := ctx.Value(cropURLContextKey{}).(string)
+	if cropURL == "" {
+		baseURL := strings.TrimSuffix(g.BaseURL, "/")
+		if baseURL == "" {
+			baseURL = "https://notes.brotherlogic.org"
+		} else if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+			baseURL = "https://" + baseURL
+		}
+		cropURL = fmt.Sprintf("%s/api/crops/%s.png", baseURL, hashHex)
+	}
+
+	imgTag := fmt.Sprintf("\n\n### Crop Area\n![Handwritten Note Crop](%s)", cropURL)
 
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/issues", repo)
 
